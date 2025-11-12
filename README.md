@@ -4,7 +4,7 @@ Open `org.kochtobi.mount-time-machine.plist` and enter your information in the p
 Them move and start the agent in launchctl
 ```bash
 cp org.kochtobi.mount-time-machine.plist ~/Library/LaunchAgents/
-cp mounting-skript.sh ~/.local/bin/
-chmod +x ~/.local/bin/mounting-skript.sh
+cp mounting-skript.sh /usr/local/bin/
+chmod +x /usr/local/bin/mounting-skript.sh
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/org.kochtobi.mount-time-machine.plist
 ```
