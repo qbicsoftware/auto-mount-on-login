@@ -29,3 +29,4 @@ mv mounting-skript.sh /usr/local/bin/
 chmod +x /usr/local/bin/mounting-skript.sh
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/org.kochtobi.mount-time-machine.plist
 ```
+You may be asked to enter your ZDV password.
