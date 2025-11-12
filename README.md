@@ -1,4 +1,13 @@
-# Setup the scripts to mount your SMB share on login
+
+## What does this repository solve?
+
+When the applie time machine is configured to use a SMB share, disconnects can interrupt the backup.
+As login items are only triggered once on login and many people do not log out but only lock their screen, a re-mounting is never attempted. 
+This leads to missed backups and manual effort to connect to the SMB share using the Finder. 
+
+By following the steps in this repository, a re-connection and re-mounting of the required volumes are attempted every minute. The mount attempt is only made when located within a defined network.
+
+## Setup the scripts to mount your SMB share on login
 
 Open `org.kochtobi.mount-time-machine.plist` and enter your information in the program arguments.
 ```bash
