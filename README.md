@@ -4,6 +4,7 @@ Open `org.kochtobi.mount-time-machine.plist` and enter your information in the p
 ```bash
 vim org.kochtobi.mount-time-machine.plist
 ```
+**_Make sure to replace all comments with your information!_**
 
 Then move the files and start the agent in launchctl
 ```bash
