@@ -12,10 +12,10 @@
     <key>ProgramArguments</key>
     <array>
         <string>/usr/local/bin/mounting-skript.sh</string>
-        <string>smb://my-workdgroup-storage <!-- your workgroup storage.de: CHANGE ME --></string>
-        <string>time-machine <!-- your dmg name: CHANGE ME --></string>
-        <string>abc123 <!-- your username on the workgroup storage: CHANGE ME --></string>
-        <string>134.2.<!-- your IP address, can be a prefix or any other greppable elements e.g. "134.2." --></string>
+        <string><!-- smb://my-workdgroup-storage --></string>
+        <string><!-- your dmg name without the file type e.g. time-machine for time-machine.dmg --></string>
+        <string><!-- your username on the workgroup storage --></string>
+        <string><!-- your IP address; Can be a prefix or any other part of your IP address e.g. 134.2.116. --></string>
     </array>    
     <key>WorkingDirectory</key>
     <string>/tmp</string>
