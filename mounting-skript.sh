@@ -32,8 +32,8 @@ else
 fi
 if ! [ -d /Volumes/$DMG_NAME ]; then
   # mount time machine
-  echo $(date +"%Y-%m-%d %T")" time machine disconnected. Trying to re-mount..."
-  open $TIME_MACHINE_DMG
+  echo $(date +"%Y-%m-%d %T")" time machine disconnected. Trying to re-mount $TIME_MACHINE_DMG ..."
+  hdiutil attach $TIME_MACHINE_DMG
 else 
   echo $(date +"%Y-%m-%d %T")" the desired volume is mounted already. Nothing left to do."
   exit 0
