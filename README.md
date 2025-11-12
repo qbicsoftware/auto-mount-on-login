@@ -1,6 +1,9 @@
 # Setup the scripts to mount your SMB share on login
 
 Open `org.kochtobi.mount-time-machine.plist` and enter your information in the program arguments.
+```bash
+vim org.kochtobi.mount-time-machine.plist
+```
 
 Then move the files and start the agent in launchctl
 ```bash
