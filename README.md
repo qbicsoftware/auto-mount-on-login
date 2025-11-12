@@ -9,6 +9,13 @@ By following the steps in this repository, a re-connection and re-mounting of th
 
 ## Setup the scripts to mount your SMB share on login
 
+Clone this repository and navigate into the created folder
+
+```bash
+git clone https://github.com/KochTobi/auto-mount-on-login.git
+cd auto-mount-on-login
+```
+
 Open `org.kochtobi.mount-time-machine.plist` and enter your information in the program arguments.
 ```bash
 vim org.kochtobi.mount-time-machine.plist
