@@ -1,7 +1,8 @@
 
 ## What does this repository solve?
 
-When the applie time machine is configured to use a SMB share, disconnects can interrupt the backup.
+When the Apple time machine is configured to use a SMB share, disconnects can interrupt the backup.
+
 As login items are only triggered once on login and many people do not log out but only lock their screen, a re-mounting is never attempted. 
 This leads to missed backups and manual effort to connect to the SMB share using the Finder. 
 
@@ -29,4 +30,4 @@ mv mounting-skript.sh /usr/local/bin/
 chmod +x /usr/local/bin/mounting-skript.sh
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/org.kochtobi.mount-time-machine.plist
 ```
-You may be asked to enter your ZDV password.
+**_You may be asked to enter your ZDV password._**
