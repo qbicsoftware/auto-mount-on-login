@@ -34,8 +34,17 @@ LOG_DIR="$HOME/Library/Logs"
 
 # The wrapper app gives the LaunchAgent a TCC application identity so macOS can
 # ask for "Network Volumes" consent. See README, "Network volume permission".
+# It is ad-hoc signed: an unsigned applet has no code identity, so TCC would
+# deny silently instead of prompting.
 APP_DIR="$HOME/Applications/MountTimeMachine.app"
 APP_EXEC="$APP_DIR/Contents/MacOS/applet"
+
+# Settings for the wrapper live OUTSIDE the bundle. The "Network Volumes" grant
+# is recorded against the bundle's code signature, so nothing mutable may sit
+# inside it (that would change the signature and reset the grant on every
+# install). The bundled script is taken from /usr/local/bin instead.
+CONFIG_DIR="$HOME/.config/auto-mount-on-login"
+CONFIG_DST="$CONFIG_DIR/config.env"
 
 DEFAULT_SERVER='smb://workgroup-storage.qbic.uni-tuebingen.de'
 DEFAULT_SUBNET='134.2.0.0/16'
@@ -413,7 +422,7 @@ shell_quote() {
 
 # The wrapper app cannot read the LaunchAgent's EnvironmentVariables: AppleScript
 # runs `do shell script` with a fixed minimal environment. So the same settings
-# are written to Resources/config.env inside the bundle and sourced there.
+# are written to $CONFIG_DST (outside the app bundle), which the applet sources.
 write_config_env() {
   local dst=$TMP_DIR/config.env
   {
@@ -441,8 +450,11 @@ install_file() {
   fi
 
   if [[ ! -d $dir ]]; then
-    info "creating $dir (sudo may ask for your password)"
-    sudo mkdir -p "$dir"
+    # User-owned paths (under $HOME) must not go through sudo.
+    if ! mkdir -p "$dir" 2>/dev/null; then
+      info "root is needed to create $dir (sudo may ask for your password)"
+      sudo mkdir -p "$dir"
+    fi
   fi
 
   if [[ -w $dir ]]; then
@@ -462,6 +474,10 @@ install_files() {
   done
 
   if (( USE_APP )); then
+    # config.env lives outside the app bundle: the bundle is signed, and
+    # changing anything inside it would invalidate the code signature - and
+    # with it the "Network Volumes" grant.
+    install_file "$TMP_DIR/config.env" "$CONFIG_DST" 600
     build_app
   fi
 
@@ -477,49 +493,37 @@ install_files() {
   fi
 }
 
-# Build ~/Applications/MountTimeMachine.app around the shell script. It is an
-# osacompile applet with the script in its Resources, so the job has an
-# application identity and macOS can ask for "Network Volumes" consent.
+# Build ~/Applications/MountTimeMachine.app, an osacompile applet, and ad-hoc
+# sign it. The applet gives the LaunchAgent an application identity, so macOS
+# can ask for "Network Volumes" consent; the signature is what TCC records for
+# that grant (an unsigned applet is denied silently, without a prompt).
+#
+# Nothing mutable is stored in the bundle: the script runs from $BIN_DST and the
+# settings come from $CONFIG_DST, so updating either does not change the
+# signature. The bundle is only rebuilt when the applet itself changes.
 build_app() {
-  local src_script=$TMP_DIR/$SCRIPT_NAME
-  local src_config=$TMP_DIR/config.env
   local src_as=$TMP_DIR/$APPLESCRIPT_NAME
   local src_info=$TMP_DIR/$INFO_PLIST_NAME
   local contents="$APP_DIR/Contents"
   local info="$contents/Info.plist"
   local res="$contents/Resources"
-  local changed=0 same_as=0
+  local src_as_in_bundle="$res/$APPLESCRIPT_NAME"
 
   if (( DRY_RUN )); then
     info "would run: osacompile -o '$APP_DIR' '$src_as'"
-    info "would copy $SCRIPT_NAME, config.env and the wrapper source into $res"
     info "would set CFBundleIdentifier and NSNetworkVolumesUsageDescription in $info"
+    info "would run: codesign --force --deep --sign - '$APP_DIR'"
     return 0
   fi
 
   command -v osacompile >/dev/null 2>&1 ||
     die "osacompile is missing; install the Command Line Tools or re-run with --no-app"
 
-  # TCC keys the "Network Volumes" grant to the bundle, and recompiling the
-  # applet changes it (which can reset the grant). So only rewrite what really
-  # changed: settings/script are refreshed in place, while a new wrapper source
-  # needs a rebuild.
-  if [[ -x $APP_EXEC && -f "$res/$SCRIPT_NAME" && -f "$res/config.env" &&
-    -f "$res/$APPLESCRIPT_NAME" ]]; then
-    cmp -s "$src_script" "$res/$SCRIPT_NAME" || changed=1
-    cmp -s "$src_config" "$res/config.env" || changed=1
-    cmp -s "$src_as" "$res/$APPLESCRIPT_NAME" && same_as=1
-
-    if (( ! changed && same_as )); then
-      info "  $APP_DIR is up to date; keeping it (and its privacy grant)"
-      return 0
-    fi
-    if (( same_as )); then
-      # Only settings changed: refresh the resources without recompiling.
-      install -m 755 "$src_script" "$res/$SCRIPT_NAME"
-      install -m 644 "$src_config" "$res/config.env"
-      return 0
-    fi
+  # Keep an existing, unchanged bundle (and its grant) untouched.
+  if [[ -x $APP_EXEC && -f "$src_as_in_bundle" ]] &&
+    cmp -s "$src_as" "$src_as_in_bundle"; then
+    info "  $APP_DIR is up to date; keeping it (and its privacy grant)"
+    return 0
   fi
 
   mkdir -p "$HOME/Applications"
@@ -528,11 +532,8 @@ build_app() {
   if ! osacompile -o "$APP_DIR" "$src_as"; then
     die "could not build $APP_DIR with osacompile"
   fi
-
   mkdir -p "$res"
-  install -m 755 "$src_script" "$res/$SCRIPT_NAME"
-  install -m 644 "$src_config" "$res/config.env"
-  install -m 644 "$src_as" "$res/$APPLESCRIPT_NAME"
+  install -m 644 "$src_as" "$src_as_in_bundle"
 
   # Start from the app's own Info.plist and layer our keys on top, so the keys
   # osacompile wrote (CFBundleExecutable, ...) are kept.
@@ -543,6 +544,13 @@ build_app() {
   set_plist CFBundleName 'MountTimeMachine' "$info"
   set_plist_bool LSUIElement true "$info"
   set_plist_from_file "$src_info" "$info"
+
+  # An ad-hoc signature (identity "-") gives the bundle a stable code identity.
+  # Without it TCC has no identity to attach the consent to and denies silently.
+  if ! codesign --force --deep --sign - "$APP_DIR"; then
+    warn "could not ad-hoc sign $APP_DIR; macOS may deny network-volume access"
+    warn "instead of asking - grant it Full Disk Access, or re-run install.sh"
+  fi
 
   # Nudge LaunchServices so the fresh bundle is known, and the consent dialog
   # is attributed to it rather than to an "unknown" process.
@@ -642,6 +650,7 @@ print_done() {
   info "  sudo rm '$BIN_DST' '$BIN_DIR/${HELPERS[0]}' '$BIN_DIR/${HELPERS[1]}'"
   if (( USE_APP )); then
     info "  rm -rf '$APP_DIR'"
+    info "  rm -rf '$CONFIG_DIR'"
   fi
   info ""
   info "The first mount may show Apple's password dialog for the share or the"

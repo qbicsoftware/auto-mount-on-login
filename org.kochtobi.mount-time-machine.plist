@@ -25,8 +25,8 @@
         Note: the app wrapper (the default with install.sh) does NOT read these
         variables when it runs the mount script - AppleScript's `do shell
         script` uses a fixed environment, so the installer writes the settings
-        to Resources/config.env inside the bundle instead. These keys are still
-        read by the start-autobackup / stop-autobackup helpers, and by the
+        to ~/.config/auto-mount-on-login/config.env instead. These keys are
+        still read by the start-autobackup / stop-autobackup helpers, and by the
         script itself with the no-app install option, so keep them in sync.
     -->
     <key>EnvironmentVariables</key>

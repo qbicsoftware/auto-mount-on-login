@@ -227,16 +227,22 @@ shell script runs as a child of that app, so the access is attributed to
 
 If you missed the dialog, enable it by hand: **System Settings → Privacy &
 Security → Files and Folders → MountTimeMachine**. Granting Full Disk Access to
-`MountTimeMachine` there also works. The grant is tied to the app's bundle
-identifier, so it survives upgrades as long as the installer is used.
+`MountTimeMachine` there also works.
+
+The wrapper is **ad-hoc signed** (`codesign --sign -`). An unsigned applet has no
+code identity, so TCC would deny silently without ever showing the dialog; the
+signature is what the grant is recorded against. For the same reason nothing
+mutable lives inside the bundle: the applet runs `/usr/local/bin/mount-time-machine.sh`
+and reads its settings from `~/.config/auto-mount-on-login/config.env`, so
+updating the script or the settings (and re-running `install.sh`) does not change
+the signature — and the grant survives. Only a change to the applet itself
+rebuilds and re-signs the bundle, which may ask for the permission once more.
 
 Because AppleScript's `do shell script` starts the script with a fixed, minimal
 environment, the wrapper does **not** read the LaunchAgent's
-`EnvironmentVariables`. The installer writes the settings to
-`~/Applications/MountTimeMachine.app/Contents/Resources/config.env` instead;
-that is the file to edit if you want to change something without re-running
-`install.sh`. (The helper scripts still read the plist, so the installer keeps
-both in sync.)
+`EnvironmentVariables`. Edit `~/.config/auto-mount-on-login/config.env` to change
+a setting without re-running `install.sh`. (The helper scripts still read the
+plist, so the installer keeps both in sync.)
 
 ### Without the app wrapper
 
@@ -361,6 +367,7 @@ launchctl bootout gui/$(id -u)/org.kochtobi.mount-time-machine
 launchctl disable gui/$(id -u)/org.kochtobi.mount-time-machine 2>/dev/null || true
 rm ~/Library/LaunchAgents/org.kochtobi.mount-time-machine.plist
 rm -rf ~/Applications/MountTimeMachine.app
+rm -rf ~/.config/auto-mount-on-login
 sudo rm /usr/local/bin/mount-time-machine.sh \
         /usr/local/bin/start-autobackup \
         /usr/local/bin/stop-autobackup

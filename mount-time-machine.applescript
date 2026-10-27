@@ -12,31 +12,28 @@
 -- directly by launchd has none, so every read is denied with
 -- "Operation not permitted" and the user is never asked.
 --
--- This bundle gives the LaunchAgent that identity: the shell script runs as a
--- child of the applet, TCC attributes the file access to MountTimeMachine.app,
--- and the user grants "Network Volumes" once for this app - instead of giving
--- Full Disk Access to /bin/bash for every script on the Mac.
+-- This bundle gives the LaunchAgent that identity. The bundle is ad-hoc signed
+-- by install.sh; TCC records the grant against that code signature, so nothing
+-- mutable is kept inside the bundle. Instead the applet runs the script from
+-- /usr/local/bin and reads its settings from ~/.config/auto-mount-on-login.
 --
--- Configuration (TM_VOLUME, SMB_USER, ...) is read from the bundled
--- Resources/config.env, which the installer writes. It is not taken from the
--- environment: AppleScript's `do shell script` starts a shell with a fixed,
--- minimal environment and does not inherit the LaunchAgent's
--- EnvironmentVariables.
+-- Configuration is not taken from the environment: AppleScript's `do shell
+-- script` starts a shell with a fixed, minimal environment and does not inherit
+-- the LaunchAgent's EnvironmentVariables.
 --
 -- The app shows no window and no Dock icon.
 
 on run
 	try
-		set scriptPath to POSIX path of (path to resource "mount-time-machine.sh")
-		set configPath to POSIX path of (path to resource "config.env")
+		set scriptPath to "/usr/local/bin/mount-time-machine.sh"
+		set configPath to (POSIX path of (path to home folder)) & ".config/auto-mount-on-login/config.env"
 
 		-- `set -a` exports everything config.env defines, so the shell script
-		-- sees the same variables the LaunchAgent passes in the --no-app case.
-		-- PATH is set explicitly: `do shell script` otherwise uses a minimal
-		-- /usr/bin:/bin:/usr/sbin:/sbin, and the script may need /usr/local/bin.
+		-- sees the configured TM_VOLUME, SMB_USER, ... PATH is set explicitly:
+		-- `do shell script` otherwise uses a minimal /usr/bin:/bin:/usr/sbin:/sbin.
 		set cmd to "export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" & ¬
-			"; set -a; . " & quoted form of configPath & ¬
-			"; set +a; exec " & quoted form of scriptPath
+			"; if [ -r " & quoted form of configPath & " ]; then set -a; . " & ¬
+			quoted form of configPath & "; set +a; fi; exec " & quoted form of scriptPath
 
 		-- The script may wait for Apple's password dialog (PROMPT_TIMEOUT,
 		-- 300s by default), so raise AppleScript's default 120s cap.
