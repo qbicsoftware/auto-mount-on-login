@@ -251,13 +251,92 @@ mount_share() {
   return 1
 }
 
+dir_is_usable() {
+  local dir=$1
+  [[ -d $dir ]] && ls -1A "$dir" >/dev/null 2>&1
+}
+
+remount_share() {
+  local mount_point=$1
+
+  # A stale SMB mount stays in `mount` output (and in /Volumes) after sleep or
+  # a dropped connection, but cannot be listed. Eject it and mount it again.
+  # This runs from launchd without a terminal, so it must never call sudo.
+  if ! diskutil unmount force "$mount_point" >/dev/null 2>&1; then
+    warn "could not eject the unusable mount $mount_point"
+    return 1
+  fi
+  mount_share
+}
+
 # ---------------------------------------------------------------------------
 # Time Machine image
 # ---------------------------------------------------------------------------
 
+# One path per line for every image in DIR (and, with depth > 0, one level
+# below it).
+#
+# `ls -1A` instead of globs on purpose: a glob that cannot read a directory
+# (stale SMB mount, permission problem) silently expands to nothing, which is
+# indistinguishable from "no image there". `ls` reports the real error, so the
+# log can explain what happened.
+scan_images() {
+  local dir=$1 depth=$2 entries entry name path
+
+  # `ls -1A` on purpose (see the comment above); names with newlines are not a
+  # realistic case for disk image files.
+  # shellcheck disable=SC2012
+  if ! entries=$(ls -1A "$dir" 2>&1); then
+    warn "cannot list $dir: $entries"
+    return 1
+  fi
+
+  while IFS= read -r entry; do
+    if [[ -z $entry ]]; then
+      continue
+    fi
+    # ._time-machine.asif is the AppleDouble metadata file of
+    # time-machine.asif on SMB shares. Skip dot entries, like a glob does.
+    if [[ $entry == .* ]]; then
+      continue
+    fi
+
+    path="$dir/$entry"
+    name=$(printf '%s' "$entry" | tr '[:upper:]' '[:lower:]')
+    case $name in
+      *.dmg | *.asif | *.sparseimage | *.sparsebundle)
+        printf '%s\n' "$path"
+        ;;
+      *)
+        # .sparsebundle is an image and a directory at the same time; never
+        # descend into it (handled above), but do look one level down.
+        if (( depth > 0 )) && [[ -d $path ]]; then
+          scan_images "$path" $((depth - 1)) || true
+        fi
+        ;;
+    esac
+  done <<< "$entries"
+
+  return 0
+}
+
+# Log what is actually in DIR; bounded, so a huge share cannot flood the log.
+log_directory() {
+  local dir=$1 out line
+  # shellcheck disable=SC2012
+  out=$(ls -la "$dir" 2>&1 | head -n 40) || true
+  # stderr, because find_image's stdout is the image path
+  {
+    log "  contents of $dir (first 40 lines):"
+    while IFS= read -r line; do
+      log "    $line"
+    done <<< "$out"
+  } >&2
+}
+
 find_image() {
-  local dir=$1
-  local -a matches=()
+  local dir=$1 attempt line
+  local -a images=()
 
   if [[ -n $IMAGE_NAME ]]; then
     if [[ -e "$dir/$IMAGE_NAME" ]]; then
@@ -265,29 +344,41 @@ find_image() {
       return 0
     fi
     warn "IMAGE_NAME '$IMAGE_NAME' not found in $dir"
+    log_directory "$dir"
     return 1
   fi
 
   # Images are expected in the share root (the user id folder) or directly
-  # below it. bash 3.2 (macOS) has no mapfile and BSD find has no -maxdepth,
-  # so plain globs are the portable option here.
-  shopt -s nullglob nocaseglob
-  matches=(
-    "$dir"/*.dmg "$dir"/*.asif "$dir"/*.sparseimage "$dir"/*.sparsebundle
-    "$dir"/*/*.dmg "$dir"/*/*.asif "$dir"/*/*.sparseimage "$dir"/*/*.sparsebundle
-  )
+  # below it. Retry once: right after mounting, an SMB directory can still be
+  # empty or not ready.
+  for attempt in 1 2; do
+    images=()
+    while IFS= read -r line; do
+      if [[ -n $line ]]; then
+        images+=("$line")
+      fi
+    done < <(scan_images "$dir" 1)
 
-  if [[ ${#matches[@]} -eq 0 ]]; then
+    if [[ ${#images[@]} -gt 0 ]]; then
+      break
+    fi
+    if (( attempt == 1 )); then
+      sleep 2
+    fi
+  done
+
+  if [[ ${#images[@]} -eq 0 ]]; then
     warn "no Time Machine image (*.dmg, *.asif, *.sparseimage, *.sparsebundle) found in $dir"
+    log_directory "$dir"
     return 1
   fi
-  if [[ ${#matches[@]} -gt 1 ]]; then
+  if [[ ${#images[@]} -gt 1 ]]; then
     warn "found more than one image in $dir, please set IMAGE_NAME:"
-    printf '  %s\n' "${matches[@]}" >&2
+    printf '  %s\n' "${images[@]}" >&2
     return 1
   fi
 
-  printf '%s\n' "${matches[0]}"
+  printf '%s\n' "${images[0]}"
 }
 
 keychain_passphrase() {
@@ -428,7 +519,13 @@ main() {
 
   local mount_point image timeout
   if mount_point=$(share_mount_point); then
-    log "SMB share already mounted at $mount_point"
+    if dir_is_usable "$mount_point"; then
+      log "SMB share already mounted at $mount_point"
+    else
+      warn "share at $mount_point is mounted but cannot be listed (stale mount?); remounting"
+      remount_share "$mount_point" || die "share at $mount_point is not usable"
+      mount_point=$(share_mount_point) || die "share mounted but no mount point found"
+    fi
   else
     mount_share || die "failed to mount ${SMB_SERVER%/}/${SMB_SHARE}"
     mount_point=$(share_mount_point) || die "share mounted but no mount point found"
