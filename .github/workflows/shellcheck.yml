@@ -10,4 +10,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run shellcheck
-        run: shellcheck -s bash mount-time-machine.sh install.sh
+        run: shellcheck -s bash mount-time-machine.sh install.sh start-autobackup stop-autobackup

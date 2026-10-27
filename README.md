@@ -113,10 +113,11 @@ mount the image once by hand, run `ls /Volumes`, and re-run the installer with
 the name that appeared.
 
 Then it prints a summary, asks for confirmation, verifies the downloaded
-files, installs the script to `/usr/local/bin` (using `sudo` only if needed)
-and the LaunchAgent to `~/Library/LaunchAgents`, optionally stores the image
-passphrase in your login keychain, and runs `launchctl bootout` /
-`launchctl bootstrap`. Re-running it upgrades an existing installation.
+files, installs the script and the two `*-autobackup` helpers to
+`/usr/local/bin` (using `sudo` only if needed) and the LaunchAgent to
+`~/Library/LaunchAgents`, optionally stores the image passphrase in your login
+keychain, and runs `launchctl bootout` / `launchctl bootstrap`. Re-running it
+upgrades an existing installation.
 
 Options (pass them after `-s --`):
 
@@ -166,7 +167,7 @@ plutil -lint org.kochtobi.mount-time-machine.plist
 
 # 2. install
 sudo mkdir -p /usr/local/bin
-sudo install -m 755 mount-time-machine.sh /usr/local/bin/mount-time-machine.sh
+sudo install -m 755 mount-time-machine.sh start-autobackup stop-autobackup /usr/local/bin/
 install -m 644 org.kochtobi.mount-time-machine.plist ~/Library/LaunchAgents/
 
 # 3. (re)load the agent
@@ -192,6 +193,51 @@ tail -f ~/Library/Logs/auto-mount-on-login.log
 
 `state = not running` between intervals is normal, as is an empty log when the
 volume is already mounted or the Mac is outside `SUBNET`.
+
+## Pause and resume backups
+
+Two helpers are installed next to `mount-time-machine.sh`:
+
+```bash
+stop-autobackup     # disable the agent and automatic backups
+start-autobackup    # enable both again
+```
+
+`stop-autobackup`:
+
+1. unloads the LaunchAgent and disables it, so it does not start again at the
+   next login (a plain `launchctl bootout` would only last until then),
+2. cancels a backup that is currently running,
+3. runs `sudo tmutil disable` to switch "Back Up Automatically" off,
+4. ejects the Time Machine volume as well if you pass `--unmount`.
+
+`start-autobackup` re-enables the agent, loads it (or restarts it if it is
+already loaded) so the share is mounted immediately when the Mac is inside
+`SUBNET`, and runs `sudo tmutil enable`.
+
+Run both as **yourself**, not with `sudo`; they call `sudo` only for `tmutil`.
+`tmutil` requires Full Disk Access for the terminal you run them in
+(System Settings → Privacy & Security → Full Disk Access). `--dry-run` prints
+the commands without changing anything.
+
+Without the helpers, the same steps are:
+
+```bash
+# pause
+launchctl bootout gui/$(id -u)/org.kochtobi.mount-time-machine
+launchctl disable gui/$(id -u)/org.kochtobi.mount-time-machine
+sudo tmutil stopbackup   # if a backup is running
+sudo tmutil disable
+
+# resume
+launchctl enable gui/$(id -u)/org.kochtobi.mount-time-machine
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/org.kochtobi.mount-time-machine.plist
+sudo tmutil enable
+```
+
+Pausing is not the same as [uninstalling](#uninstall): the agent, the scripts
+and (optionally) the keychain entry stay in place, so `start-autobackup` can
+restore everything.
 
 ## Troubleshooting
 
@@ -222,9 +268,16 @@ volume is already mounted or the Mac is outside `SUBNET`.
 
 ```bash
 launchctl bootout gui/$(id -u)/org.kochtobi.mount-time-machine
+launchctl disable gui/$(id -u)/org.kochtobi.mount-time-machine 2>/dev/null || true
 rm ~/Library/LaunchAgents/org.kochtobi.mount-time-machine.plist
-sudo rm /usr/local/bin/mount-time-machine.sh
+sudo rm /usr/local/bin/mount-time-machine.sh \
+        /usr/local/bin/start-autobackup \
+        /usr/local/bin/stop-autobackup
 ```
+
+This removes the agent only. If you previously ran `stop-autobackup`, automatic
+backups stay off until you run `sudo tmutil enable` (or tick "Back Up
+Automatically" in System Settings → General → Time Machine).
 
 Optionally delete the stored image passphrase:
 

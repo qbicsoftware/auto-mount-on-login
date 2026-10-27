@@ -23,7 +23,9 @@ REF=${AMOL_REF:-main}
 LABEL='org.kochtobi.mount-time-machine'
 SCRIPT_NAME='mount-time-machine.sh'
 PLIST_NAME='org.kochtobi.mount-time-machine.plist'
+HELPERS=(start-autobackup stop-autobackup)
 BIN_DST="/usr/local/bin/$SCRIPT_NAME"
+BIN_DIR=${BIN_DST%/*}
 AGENT_DIR="$HOME/Library/LaunchAgents"
 PLIST_DST="$AGENT_DIR/$PLIST_NAME"
 LOG_DIR="$HOME/Library/Logs"
@@ -278,6 +280,8 @@ show_summary() {
   info ""
   info "Will install:"
   info "  script : $BIN_DST"
+  info "  helper : $BIN_DIR/${HELPERS[0]}"
+  info "  helper : $BIN_DIR/${HELPERS[1]}"
   info "  agent  : $PLIST_DST"
   if (( DRY_RUN )); then
     info ""
@@ -300,6 +304,7 @@ fetch() {
 }
 
 fetch_files() {
+  local helper
   fetch "$SCRIPT_NAME" "$TMP_DIR/$SCRIPT_NAME"
   fetch "$PLIST_NAME" "$TMP_DIR/$PLIST_NAME"
 
@@ -312,6 +317,16 @@ fetch_files() {
   if ! plutil -lint "$TMP_DIR/$PLIST_NAME" >/dev/null 2>&1; then
     die "downloaded LaunchAgent is not a valid plist"
   fi
+
+  for helper in "${HELPERS[@]}"; do
+    fetch "$helper" "$TMP_DIR/$helper"
+    if ! bash -n "$TMP_DIR/$helper"; then
+      die "downloaded $helper has a syntax error"
+    fi
+    if ! grep -q 'auto-mount-on-login' "$TMP_DIR/$helper"; then
+      die "downloaded file does not look like $helper"
+    fi
+  done
 }
 
 # set_plist KEYPATH VALUE FILE
@@ -363,7 +378,12 @@ install_file() {
 }
 
 install_files() {
+  local helper
+
   install_file "$TMP_DIR/$SCRIPT_NAME" "$BIN_DST" 755
+  for helper in "${HELPERS[@]}"; do
+    install_file "$TMP_DIR/$helper" "$BIN_DIR/$helper" 755
+  done
 
   if (( ! DRY_RUN )); then
     mkdir -p "$AGENT_DIR"
@@ -380,11 +400,15 @@ install_files() {
 load_agent() {
   if (( DRY_RUN )); then
     info "would run: launchctl bootout gui/$(id -u)/$LABEL"
+    info "would run: launchctl enable gui/$(id -u)/$LABEL"
     info "would run: launchctl bootstrap gui/$(id -u) $PLIST_DST"
     return 0
   fi
 
   launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+  # A previous stop-autobackup may have disabled the service; bootstrap would
+  # fail until it is enabled again.
+  launchctl enable "gui/$(id -u)/$LABEL" 2>/dev/null || true
   if ! launchctl bootstrap "gui/$(id -u)" "$PLIST_DST"; then
     die "launchctl bootstrap failed; inspect with: launchctl print gui/$(id -u)/$LABEL"
   fi
@@ -426,10 +450,12 @@ print_done() {
   info ""
   info "Verify : launchctl print gui/$(id -u)/$LABEL"
   info "Logs   : $LOG_DIR/auto-mount-on-login.log"
+  info "Pause  : $BIN_DIR/stop-autobackup   (also turns automatic backups off)"
+  info "Resume : $BIN_DIR/start-autobackup"
   info "Uninstall:"
   info "  launchctl bootout gui/$(id -u)/$LABEL"
   info "  rm '$PLIST_DST'"
-  info "  sudo rm '$BIN_DST'"
+  info "  sudo rm '$BIN_DST' '$BIN_DIR/${HELPERS[0]}' '$BIN_DIR/${HELPERS[1]}'"
   info ""
   info "The first mount may show Apple's password dialog for the share or the"
   info "image; tick 'Remember password in my keychain' when offered."
