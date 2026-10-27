@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+#
+# stop-autobackup
+#
+# Pause the automatic Time Machine backups configured by
+# auto-mount-on-login:
+#   1. unload the LaunchAgent and disable it, so launchd does not start it
+#      again at the next login,
+#   2. cancel a backup that is running right now,
+#   3. switch "Back Up Automatically" off with tmutil,
+#   4. optionally (--unmount) eject the Time Machine volume.
+#
+# start-autobackup undoes all of this.
+#
+# tmutil needs root and Full Disk Access, so the script calls sudo for it.
+# Run this as your normal user; do not run the whole script with sudo.
+
+set -euo pipefail
+
+PROG=$(basename "$0")
+LABEL=${LABEL:-org.kochtobi.mount-time-machine}
+PLIST=${PLIST:-$HOME/Library/LaunchAgents/$LABEL.plist}
+UID_NUM=$(id -u)
+
+DRY_RUN=0
+UNMOUNT=0
+
+usage() {
+  cat <<EOF
+Usage: $PROG [--dry-run] [--unmount]
+
+Stops the auto-mount-on-login LaunchAgent and turns Time Machine's automatic
+backups off. The agent stays disabled at login until 'start-autobackup' runs.
+
+  -n, --dry-run   Print what would be done, change nothing (works on any OS)
+      --unmount   Also eject the Time Machine volume (TM_VOLUME from the
+                  LaunchAgent) after the backup is stopped
+  -h, --help      Show this help
+
+Environment:
+  LABEL           LaunchAgent label [$LABEL]
+  PLIST           LaunchAgent path [$PLIST]
+EOF
+}
+
+info() { printf '%s\n' "$*"; }
+warn() { printf 'WARNING: %s\n' "$*" >&2; }
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+run() {
+  if (( DRY_RUN )); then
+    printf 'would run: %s\n' "$*"
+    return 0
+  fi
+  "$@"
+}
+
+agent_loaded() {
+  launchctl print "gui/$UID_NUM/$LABEL" >/dev/null 2>&1
+}
+
+# plist_value KEY -> prints the value from the installed LaunchAgent
+plist_value() {
+  [[ -f $PLIST ]] || return 1
+  plutil -extract "EnvironmentVariables.$1" raw -o - "$PLIST" 2>/dev/null
+}
+
+backup_running() {
+  tmutil status 2>/dev/null | grep -q 'Running = 1'
+}
+
+unmount_backup_volume() {
+  local volume
+  volume=$(plist_value TM_VOLUME) || volume=''
+
+  if [[ -z $volume ]]; then
+    warn "TM_VOLUME is not set in $PLIST; not unmounting anything"
+    return 0
+  fi
+  if [[ ! -d /Volumes/$volume ]]; then
+    info "  backup volume '$volume' is not mounted"
+    return 0
+  fi
+
+  info "  ejecting /Volumes/$volume"
+  run diskutil unmount "/Volumes/$volume" ||
+    warn "could not unmount /Volumes/$volume (a process may still be using it)"
+}
+
+main() {
+  while (( $# )); do
+    case $1 in
+      -n | --dry-run)
+        DRY_RUN=1
+        shift
+        ;;
+      --unmount)
+        UNMOUNT=1
+        shift
+        ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *)
+        usage >&2
+        die "unknown option: $1"
+        ;;
+    esac
+  done
+
+  if (( ! DRY_RUN )); then
+    [[ $(uname -s) == Darwin ]] || die "this script targets macOS (use --dry-run to preview)"
+    (( EUID != 0 )) || die "run this as your user, not with sudo; the script uses sudo for tmutil"
+  fi
+
+  info "Stopping auto-mount-on-login and automatic Time Machine backups"
+
+  if agent_loaded; then
+    info "  unloading the LaunchAgent"
+    run launchctl bootout "gui/$UID_NUM/$LABEL"
+  else
+    info "  the LaunchAgent is not loaded"
+  fi
+  info "  disabling the LaunchAgent for future logins"
+  run launchctl disable "gui/$UID_NUM/$LABEL"
+
+  if (( DRY_RUN )); then
+    info "would cancel a running backup (if any)"
+  elif backup_running; then
+    info "  cancelling the backup that is running right now"
+    run tmutil stopbackup
+  else
+    info "  no backup is running"
+  fi
+
+  info "  switching automatic backups off"
+  if ! run sudo tmutil disable; then
+    warn "could not turn automatic backups off with tmutil"
+    warn "grant your terminal Full Disk Access in System Settings -> Privacy & Security,"
+    warn "or untick 'Back Up Automatically' in System Settings -> General -> Time Machine"
+    exit 1
+  fi
+
+  if (( UNMOUNT )); then
+    unmount_backup_volume
+  fi
+
+  info ""
+  if (( DRY_RUN )); then
+    info "Dry run: nothing was changed."
+    return 0
+  fi
+  info "The agent is disabled and will not start at login; automatic backups are off."
+  info "Run start-autobackup to enable both again."
+}
+
+main "$@"

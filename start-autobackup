@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+#
+# start-autobackup
+#
+# Resume the automatic Time Machine backups configured by
+# auto-mount-on-login:
+#   1. re-enable the LaunchAgent (undoing 'launchctl disable'),
+#   2. load it, or kick it if it is already loaded, so the share is mounted
+#      right away,
+#   3. switch "Back Up Automatically" on with tmutil.
+#
+# The volume is only mounted while this Mac has an address in the configured
+# subnet; outside that network the agent waits and backs up later.
+#
+# tmutil needs root and Full Disk Access, so the script calls sudo for it.
+# Run this as your normal user; do not run the whole script with sudo.
+
+set -euo pipefail
+
+PROG=$(basename "$0")
+LABEL=${LABEL:-org.kochtobi.mount-time-machine}
+PLIST=${PLIST:-$HOME/Library/LaunchAgents/$LABEL.plist}
+UID_NUM=$(id -u)
+
+DRY_RUN=0
+
+usage() {
+  cat <<EOF
+Usage: $PROG [--dry-run]
+
+Re-enables the auto-mount-on-login LaunchAgent, starts it immediately (which
+mounts the share if this Mac is inside the allowed subnet) and turns Time
+Machine's automatic backups on.
+
+  -n, --dry-run   Print what would be done, change nothing (works on any OS)
+  -h, --help      Show this help
+
+Environment:
+  LABEL           LaunchAgent label [$LABEL]
+  PLIST           LaunchAgent path [$PLIST]
+EOF
+}
+
+info() { printf '%s\n' "$*"; }
+warn() { printf 'WARNING: %s\n' "$*" >&2; }
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+run() {
+  if (( DRY_RUN )); then
+    printf 'would run: %s\n' "$*"
+    return 0
+  fi
+  "$@"
+}
+
+agent_loaded() {
+  launchctl print "gui/$UID_NUM/$LABEL" >/dev/null 2>&1
+}
+
+plist_value() {
+  [[ -f $PLIST ]] || return 1
+  plutil -extract "EnvironmentVariables.$1" raw -o - "$PLIST" 2>/dev/null
+}
+
+main() {
+  while (( $# )); do
+    case $1 in
+      -n | --dry-run)
+        DRY_RUN=1
+        shift
+        ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *)
+        usage >&2
+        die "unknown option: $1"
+        ;;
+    esac
+  done
+
+  if (( ! DRY_RUN )); then
+    [[ $(uname -s) == Darwin ]] || die "this script targets macOS (use --dry-run to preview)"
+    (( EUID != 0 )) || die "run this as your user, not with sudo; the script uses sudo for tmutil"
+  fi
+
+  if [[ ! -f $PLIST ]]; then
+    if (( DRY_RUN )); then
+      warn "no LaunchAgent at $PLIST; a real run would stop here"
+    else
+      die "no LaunchAgent at $PLIST; run the installer first"
+    fi
+  fi
+
+  local subnet
+  subnet=$(plist_value SUBNET) || subnet=''
+  subnet=${subnet:-134.2.0.0/16}
+
+  info "Starting auto-mount-on-login and automatic Time Machine backups"
+
+  info "  enabling the LaunchAgent"
+  run launchctl enable "gui/$UID_NUM/$LABEL"
+
+  if agent_loaded; then
+    info "  starting the agent now"
+    run launchctl kickstart -k "gui/$UID_NUM/$LABEL"
+  else
+    info "  loading the LaunchAgent"
+    run launchctl bootstrap "gui/$UID_NUM" "$PLIST"
+  fi
+
+  info "  switching automatic backups on"
+  if ! run sudo tmutil enable; then
+    warn "could not turn automatic backups on with tmutil"
+    warn "grant your terminal Full Disk Access in System Settings -> Privacy & Security,"
+    warn "or tick 'Back Up Automatically' in System Settings -> General -> Time Machine"
+    exit 1
+  fi
+
+  info ""
+  if (( DRY_RUN )); then
+    info "Dry run: nothing was changed."
+    return 0
+  fi
+  info "The agent is enabled and automatic backups are on."
+  info "The share is mounted while this Mac is inside $subnet; outside that"
+  info "network the agent waits and the next backup runs once you are back."
+}
+
+main "$@"
