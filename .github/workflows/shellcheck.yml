@@ -11,3 +11,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run shellcheck
         run: shellcheck -s bash mount-time-machine.sh install.sh start-autobackup stop-autobackup
+      - name: Validate plists
+        run: |
+          python3 - <<'PY'
+          import plistlib, sys
+          for path in ("org.kochtobi.mount-time-machine.plist", "MountTimeMachine-Info.plist"):
+              try:
+                  with open(path, "rb") as fh:
+                      plistlib.load(fh)
+              except Exception as exc:
+                  sys.exit(f"{path}: {exc}")
+              print(f"{path}: OK")
+          PY

@@ -7,6 +7,13 @@
 
     <key>ProgramArguments</key>
     <array>
+        <!-- install.sh replaces this with the wrapper app it builds at
+             ~/Applications/MountTimeMachine.app/Contents/MacOS/applet. The app
+             gives the job an application identity, so macOS can ask for
+             "Network Volumes" consent instead of silently denying the SMB
+             share (TCC). With the no-app install option this stays the plain
+             script and the job needs Full Disk Access instead.
+             Manual installs keep this path and must grant Full Disk Access. -->
         <string>/usr/local/bin/mount-time-machine.sh</string>
     </array>
 
@@ -14,6 +21,13 @@
         Replace REPLACE_WITH_* below. Optional settings (SMB_SHARE, IMAGE_NAME,
         LOG_FILE, IMAGE_KEYCHAIN_SERVICE, ...) can be added here as well; see
         README.md.
+
+        Note: the app wrapper (the default with install.sh) does NOT read these
+        variables when it runs the mount script - AppleScript's `do shell
+        script` uses a fixed environment, so the installer writes the settings
+        to Resources/config.env inside the bundle instead. These keys are still
+        read by the start-autobackup / stop-autobackup helpers, and by the
+        script itself with the no-app install option, so keep them in sync.
     -->
     <key>EnvironmentVariables</key>
     <dict>

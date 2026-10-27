@@ -16,8 +16,8 @@ When both hold, it:
 
 1. mounts the SMB share (`SMB_SERVER`/`SMB_SHARE`, by default
    `smb://workgroup-storage.qbic.uni-tuebingen.de/<SMB_USER>`), ejecting and
-   remounting it first if an existing mount cannot be listed (stale after
-   sleep or a dropped connection),
+   remounting it first if an existing mount really is stale (after sleep or a
+   dropped connection; a permission error is reported instead of remounted),
 2. looks for the Time Machine image inside that share, and
 3. attaches the image.
 
@@ -116,10 +116,16 @@ the name that appeared.
 
 Then it prints a summary, asks for confirmation, verifies the downloaded
 files, installs the script and the two `*-autobackup` helpers to
-`/usr/local/bin` (using `sudo` only if needed) and the LaunchAgent to
+`/usr/local/bin` (using `sudo` only if needed), builds the
+`MountTimeMachine.app` wrapper in `~/Applications`, installs the LaunchAgent to
 `~/Library/LaunchAgents`, optionally stores the image passphrase in your login
 keychain, and runs `launchctl bootout` / `launchctl bootstrap`. Re-running it
 upgrades an existing installation.
+
+Afterwards there is **one manual step**: the first time the agent runs, macOS
+asks whether `MountTimeMachine` may access files on a network volume — answer
+**Allow** (see [Network volume permission](#network-volume-permission)). The
+app wrapper exists only to make that scoped prompt possible.
 
 Options (pass them after `-s --`):
 
@@ -131,6 +137,7 @@ curl -fsSL https://raw.githubusercontent.com/qbicsoftware/auto-mount-on-login/ma
 | --- | --- |
 | `--ref REF` | Branch, tag or commit to download from (default `main`) |
 | `--repo OWNER/REPO` | Repository to download from (default `qbicsoftware/auto-mount-on-login`) |
+| `--no-app` | Skip the app wrapper and run the script directly (then grant Full Disk Access to `/bin/bash`; see [Network volume permission](#network-volume-permission)) |
 | `--dry-run` | Validate and print the steps without changing anything |
 | `--yes`, `-y` | Skip the final confirmation (the optional passphrase question is still asked) |
 | `--help`, `-h` | Show usage |
@@ -177,6 +184,11 @@ launchctl bootout gui/$(id -u)/org.kochtobi.mount-time-machine 2>/dev/null || tr
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/org.kochtobi.mount-time-machine.plist
 ```
 
+The template's `ProgramArguments` points at
+`/usr/local/bin/mount-time-machine.sh`, so a manual install runs the script
+directly and needs the [Full Disk Access](#without-the-app-wrapper) grant. To
+use the app wrapper instead, run `install.sh` (it builds the bundle for you).
+
 Try it once without waiting for the timer:
 
 ```bash
@@ -185,6 +197,70 @@ TM_VOLUME="Time Machine" SMB_USER="ab1234" /usr/local/bin/mount-time-machine.sh
 
 The first run may show Apple's password dialogs for the share and/or the image.
 Answer them and tick "Remember this password in my keychain" for the share.
+
+## Network volume permission
+
+macOS protects files on network volumes (an SMB share mounted under `/Volumes`)
+with its privacy system, TCC. Permission is granted **per application**, and the
+consent dialog can only be shown to a process that has an application identity.
+
+A shell script started directly by `launchd` has no such identity, so macOS
+cannot ask and denies every read with `Operation not permitted`. The agent then
+cannot list the share and never finds the image — which is what the log looks
+like:
+
+```
+ERROR: share at /Volumes/<userid> is mounted but cannot be listed: ls: /Volumes/<userid>: Operation not permitted
+```
+
+`install.sh` avoids this by installing a tiny app wrapper,
+`~/Applications/MountTimeMachine.app`, and pointing the LaunchAgent at it. The
+shell script runs as a child of that app, so the access is attributed to
+`MountTimeMachine` and macOS asks once:
+
+1. After installing, run the agent so the question appears:
+   ```bash
+   launchctl kickstart -k gui/$(id -u)/org.kochtobi.mount-time-machine
+   ```
+2. Click **Allow** in "MountTimeMachine would like to access files on a network
+   volume".
+
+If you missed the dialog, enable it by hand: **System Settings → Privacy &
+Security → Files and Folders → MountTimeMachine**. Granting Full Disk Access to
+`MountTimeMachine` there also works. The grant is tied to the app's bundle
+identifier, so it survives upgrades as long as the installer is used.
+
+Because AppleScript's `do shell script` starts the script with a fixed, minimal
+environment, the wrapper does **not** read the LaunchAgent's
+`EnvironmentVariables`. The installer writes the settings to
+`~/Applications/MountTimeMachine.app/Contents/Resources/config.env` instead;
+that is the file to edit if you want to change something without re-running
+`install.sh`. (The helper scripts still read the plist, so the installer keeps
+both in sync.)
+
+### Without the app wrapper
+
+`install.sh --no-app` skips the wrapper and runs the script directly, as before.
+macOS then has nothing to attach the grant to, and you must give **Full Disk
+Access** to the interpreter instead:
+
+1. **System Settings → Privacy & Security → Full Disk Access**
+2. Press **+**, then **Cmd+Shift+G**, type `/bin/bash`, add it and switch it on.
+   (If the picker refuses, drag `/bin/bash` from a Finder window with
+   **Cmd+Shift+.** showing hidden files.)
+3. Restart the agent.
+
+This works, but the grant covers **every** bash script on the Mac, which is why
+the app wrapper is the default. Use `--no-app` only if you cannot run apps (for
+example a locked-down, MDM-managed Mac).
+
+### Why not run as root?
+
+A root `LaunchDaemon` is not subject to these checks. It is not used here
+because the parts that must run in your login session would break: the image
+passphrase lives in *your* login keychain, the share is mounted through *your*
+Finder session, and an image attached by root would be owned by root instead of
+you.
 
 ## Verify
 
@@ -246,6 +322,10 @@ restore everything.
 - **Nothing happens.** Either you are outside `SUBNET`, or `TM_VOLUME` does not
   match the mounted volume name exactly (check `ls /Volumes` and
   `diskutil info /Volumes/...`).
+- **`Operation not permitted` in the log.** macOS is blocking the agent from
+  reading the network volume; grant the permission described under
+  [Network volume permission](#network-volume-permission). The script stops
+  with this message instead of remounting, because the mount itself is fine.
 - **The volume name is unknown.** It only exists while the image is attached,
   so mount it once by hand, compare `ls /Volumes` with the name Finder shows,
   and correct `TM_VOLUME` (re-run the installer or edit the plist). Matching is
@@ -264,12 +344,13 @@ restore everything.
   versions `diskutil image` does not exist and `hdiutil` cannot read ASIF.
 - **"more than one image found".** Set `IMAGE_NAME` to the file name.
 - **No image found although one exists.** Check the `contents of ...` lines the
-  log now prints: `._time-machine.asif` is SMB metadata for
+  log prints: `._time-machine.asif` is SMB metadata for
   `time-machine.asif`, not a second image, and is ignored. If the listing is
   empty or `ls` reports an error, the mount is stale; the script ejects it and
-  mounts the share again once. As a shortcut, name the image explicitly by
-  adding `IMAGE_NAME` to the plist (or set it in the environment when running
-  the script by hand).
+  mounts the share again once. If the error is `Operation not permitted`, it is
+  the privacy block above, not a stale mount. As a shortcut, name the image
+  explicitly by adding `IMAGE_NAME` to the plist (or set it in the environment
+  when running the script by hand).
 - **Logs.** `~/Library/Logs/auto-mount-on-login.log`; the previous file is kept
   as `.log.1` after rotation.
 
@@ -279,6 +360,7 @@ restore everything.
 launchctl bootout gui/$(id -u)/org.kochtobi.mount-time-machine
 launchctl disable gui/$(id -u)/org.kochtobi.mount-time-machine 2>/dev/null || true
 rm ~/Library/LaunchAgents/org.kochtobi.mount-time-machine.plist
+rm -rf ~/Applications/MountTimeMachine.app
 sudo rm /usr/local/bin/mount-time-machine.sh \
         /usr/local/bin/start-autobackup \
         /usr/local/bin/stop-autobackup
@@ -286,7 +368,9 @@ sudo rm /usr/local/bin/mount-time-machine.sh \
 
 This removes the agent only. If you previously ran `stop-autobackup`, automatic
 backups stay off until you run `sudo tmutil enable` (or tick "Back Up
-Automatically" in System Settings → General → Time Machine).
+Automatically" in System Settings → General → Time Machine). To also drop the
+privacy grant, remove `MountTimeMachine` from System Settings → Privacy &
+Security → Files and Folders.
 
 Optionally delete the stored image passphrase:
 

@@ -251,9 +251,37 @@ mount_share() {
   return 1
 }
 
+# listing_error DIR -> prints why DIR cannot be listed, returns non-zero.
+# On success it prints nothing and returns 0.
+listing_error() {
+  local dir=$1 out
+  if [[ ! -d $dir ]]; then
+    printf 'not a directory\n'
+    return 1
+  fi
+  # stderr is kept, stdout is discarded (we only care about the error text)
+  if out=$(ls -1A "$dir" 2>&1 >/dev/null); then
+    return 0
+  fi
+  printf '%s\n' "${out:-unknown error}"
+  return 1
+}
+
 dir_is_usable() {
-  local dir=$1
-  [[ -d $dir ]] && ls -1A "$dir" >/dev/null 2>&1
+  listing_error "$1" >/dev/null 2>&1
+}
+
+# A stale SMB mount and a privacy (TCC) denial are both "cannot list", but only
+# the first is fixed by remounting. Treat the second as a hard error.
+error_is_permission() {
+  [[ $1 == *"Operation not permitted"* || $1 == *"Permission denied"* ]]
+}
+
+warn_permission() {
+  warn "$1"
+  warn "macOS is blocking this process from reading network volumes (TCC)."
+  warn "Grant the agent 'Network Volumes' access - see the README section"
+  warn "'Network volume permission'. Not remounting: the mount itself is fine."
 }
 
 remount_share() {
@@ -283,11 +311,12 @@ remount_share() {
 scan_images() {
   local dir=$1 depth=$2 entries entry name path
 
+  # Quiet on a listing error: find_image diagnoses it once, with the full
+  # message, after the retries.
   # `ls -1A` on purpose (see the comment above); names with newlines are not a
   # realistic case for disk image files.
   # shellcheck disable=SC2012
   if ! entries=$(ls -1A "$dir" 2>&1); then
-    warn "cannot list $dir: $entries"
     return 1
   fi
 
@@ -368,6 +397,15 @@ find_image() {
   done
 
   if [[ ${#images[@]} -eq 0 ]]; then
+    local reason
+    reason=$(listing_error "$dir") || true
+    if error_is_permission "${reason:-}"; then
+      warn_permission "cannot list $dir: $reason"
+      return 1
+    fi
+    if [[ -n $reason ]]; then
+      warn "cannot list $dir: $reason"
+    fi
     warn "no Time Machine image (*.dmg, *.asif, *.sparseimage, *.sparsebundle) found in $dir"
     log_directory "$dir"
     return 1
@@ -517,12 +555,17 @@ main() {
     exit 0
   fi
 
-  local mount_point image timeout
+  local mount_point image timeout reason
   if mount_point=$(share_mount_point); then
     if dir_is_usable "$mount_point"; then
       log "SMB share already mounted at $mount_point"
     else
-      warn "share at $mount_point is mounted but cannot be listed (stale mount?); remounting"
+      reason=$(listing_error "$mount_point") || true
+      if error_is_permission "$reason"; then
+        warn_permission "share at $mount_point is mounted but cannot be listed: $reason"
+        exit 1
+      fi
+      warn "share at $mount_point is mounted but cannot be listed ($reason); remounting"
       remount_share "$mount_point" || die "share at $mount_point is not usable"
       mount_point=$(share_mount_point) || die "share mounted but no mount point found"
     fi
