@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Identifier of the wrapper app. macOS keys the "Network Volumes"
+         privacy grant to this identifier, so it must stay stable across
+         upgrades (the installer only ever rewrites the bundle beside it). -->
+    <key>CFBundleIdentifier</key>
+    <string>org.kochtobi.mount-time-machine</string>
+
+    <key>CFBundleName</key>
+    <string>MountTimeMachine</string>
+    <key>CFBundleDisplayName</key>
+    <string>MountTimeMachine</string>
+    <key>CFBundleExecutable</key>
+    <string>applet</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+
+    <!-- No Dock icon or menu bar entry: this app is only ever started by
+         launchd and shows nothing except Apple's own dialogs. -->
+    <key>LSUIElement</key>
+    <true/>
+
+    <!-- Shown in the consent dialog the first time the app reads the SMB
+         share. Without this key macOS still asks, but with a generic text. -->
+    <key>NSNetworkVolumesUsageDescription</key>
+    <string>MountTimeMachine mounts the university SMB share that holds your Time Machine backup image, just before the backup runs.</string>
+</dict>
+</plist>
