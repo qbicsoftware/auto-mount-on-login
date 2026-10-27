@@ -25,7 +25,7 @@ SCRIPT_NAME='mount-time-machine.sh'
 PLIST_NAME='org.kochtobi.mount-time-machine.plist'
 APPLESCRIPT_NAME='mount-time-machine.applescript'
 INFO_PLIST_NAME='MountTimeMachine-Info.plist'
-HELPERS=(start-autobackup stop-autobackup)
+HELPERS=(start-autobackup stop-autobackup remove-autobackup)
 BIN_DST="/usr/local/bin/$SCRIPT_NAME"
 BIN_DIR=${BIN_DST%/*}
 AGENT_DIR="$HOME/Library/LaunchAgents"
@@ -281,7 +281,7 @@ collect_config() {
 }
 
 show_summary() {
-  local volume_note=''
+  local volume_note='' helper
   if [[ ! -d /Volumes/$TM_VOLUME ]]; then
     volume_note=' (not mounted right now)'
   fi
@@ -299,8 +299,9 @@ show_summary() {
   info ""
   info "Will install:"
   info "  script : $BIN_DST"
-  info "  helper : $BIN_DIR/${HELPERS[0]}"
-  info "  helper : $BIN_DIR/${HELPERS[1]}"
+  for helper in "${HELPERS[@]}"; do
+    info "  helper : $BIN_DIR/$helper"
+  done
   if (( USE_APP )); then
     info "  app    : $APP_DIR   (for Network Volumes consent)"
   else
@@ -371,35 +372,29 @@ fetch_files() {
   fi
 }
 
-# set_plist KEYPATH VALUE FILE
+# set_plist KEYPATH VALUE FILE - replace the value, or insert the key if this is
+# the first time it is written.
 set_plist() {
   local keypath=$1 value=$2 plist=$3
-  if plutil -replace "$keypath" -string "$value" "$plist" 2>/dev/null; then
-    return 0
-  fi
-  plutil -insert "$keypath" -string "$value" "$plist" >/dev/null
+  plutil -replace "$keypath" -string "$value" "$plist" 2>/dev/null ||
+    plutil -insert "$keypath" -string "$value" "$plist" >/dev/null
 }
 
 # set_plist_bool KEYPATH true|false FILE
 set_plist_bool() {
   local keypath=$1 value=$2 plist=$3
-  if plutil -replace "$keypath" -bool "$value" "$plist" 2>/dev/null; then
-    return 0
-  fi
-  plutil -insert "$keypath" -bool "$value" "$plist" >/dev/null
+  plutil -replace "$keypath" -bool "$value" "$plist" 2>/dev/null ||
+    plutil -insert "$keypath" -bool "$value" "$plist" >/dev/null
 }
 
 configure_plist() {
-  local plist=$TMP_DIR/$PLIST_NAME
+  local plist=$TMP_DIR/$PLIST_NAME var value
 
-  set_plist 'EnvironmentVariables.TM_VOLUME' "$TM_VOLUME" "$plist"
-  set_plist 'EnvironmentVariables.SMB_USER' "$SMB_USER" "$plist"
-  set_plist 'EnvironmentVariables.SMB_SERVER' "$SMB_SERVER" "$plist"
-  set_plist 'EnvironmentVariables.SMB_SHARE' "$SMB_SHARE" "$plist"
-  set_plist 'EnvironmentVariables.SUBNET' "$SUBNET" "$plist"
-  if [[ -n $IMAGE_NAME ]]; then
-    set_plist 'EnvironmentVariables.IMAGE_NAME' "$IMAGE_NAME" "$plist"
-  fi
+  for var in TM_VOLUME SMB_USER SMB_SERVER SMB_SHARE SUBNET IMAGE_NAME; do
+    value=${!var:-}
+    [[ -n $value ]] || continue
+    set_plist "EnvironmentVariables.$var" "$value" "$plist"
+  done
 
   # Point the job at the wrapper app (or the plain script with --no-app).
   if (( USE_APP )); then
@@ -537,10 +532,7 @@ build_app() {
 
   # Start from the app's own Info.plist and layer our keys on top, so the keys
   # osacompile wrote (CFBundleExecutable, ...) are kept.
-  # osacompile does not always write CFBundleIdentifier; add it if missing.
-  if ! plutil -replace CFBundleIdentifier -string "$LABEL" "$info" 2>/dev/null; then
-    plutil -insert CFBundleIdentifier -string "$LABEL" "$info"
-  fi
+  set_plist CFBundleIdentifier "$LABEL" "$info"
   set_plist CFBundleName 'MountTimeMachine' "$info"
   set_plist_bool LSUIElement true "$info"
   set_plist_from_file "$src_info" "$info"
@@ -644,14 +636,8 @@ print_done() {
   info "Logs   : $LOG_DIR/auto-mount-on-login.log"
   info "Pause  : $BIN_DIR/stop-autobackup   (also turns automatic backups off)"
   info "Resume : $BIN_DIR/start-autobackup"
-  info "Uninstall:"
-  info "  launchctl bootout gui/$(id -u)/$LABEL"
-  info "  rm '$PLIST_DST'"
-  info "  sudo rm '$BIN_DST' '$BIN_DIR/${HELPERS[0]}' '$BIN_DIR/${HELPERS[1]}'"
-  if (( USE_APP )); then
-    info "  rm -rf '$APP_DIR'"
-    info "  rm -rf '$CONFIG_DIR'"
-  fi
+  info "Uninstall: $BIN_DIR/remove-autobackup"
+  info "           (add --purge to also drop the log and the keychain entry)"
   info ""
   info "The first mount may show Apple's password dialog for the share or the"
   info "image; tick 'Remember password in my keychain' when offered."

@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run shellcheck
-        run: shellcheck -s bash mount-time-machine.sh install.sh start-autobackup stop-autobackup
+        run: shellcheck -s bash mount-time-machine.sh install.sh start-autobackup stop-autobackup remove-autobackup
       - name: Validate plists
         run: |
           python3 - <<'PY'

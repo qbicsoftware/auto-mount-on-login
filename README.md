@@ -115,7 +115,7 @@ mount the image once by hand, run `ls /Volumes`, and re-run the installer with
 the name that appeared.
 
 Then it prints a summary, asks for confirmation, verifies the downloaded
-files, installs the script and the two `*-autobackup` helpers to
+files, installs the script and the three `*-autobackup` helpers to
 `/usr/local/bin` (using `sudo` only if needed), builds the
 `MountTimeMachine.app` wrapper in `~/Applications`, installs the LaunchAgent to
 `~/Library/LaunchAgents`, optionally stores the image passphrase in your login
@@ -176,7 +176,7 @@ plutil -lint org.kochtobi.mount-time-machine.plist
 
 # 2. install
 sudo mkdir -p /usr/local/bin
-sudo install -m 755 mount-time-machine.sh start-autobackup stop-autobackup /usr/local/bin/
+sudo install -m 755 mount-time-machine.sh start-autobackup stop-autobackup remove-autobackup /usr/local/bin/
 install -m 644 org.kochtobi.mount-time-machine.plist ~/Library/LaunchAgents/
 
 # 3. (re)load the agent
@@ -280,11 +280,12 @@ volume is already mounted or the Mac is outside `SUBNET`.
 
 ## Pause and resume backups
 
-Two helpers are installed next to `mount-time-machine.sh`:
+Three helpers are installed next to `mount-time-machine.sh`:
 
 ```bash
 stop-autobackup     # disable the agent and automatic backups
 start-autobackup    # enable both again
+remove-autobackup   # uninstall everything (see below)
 ```
 
 `stop-autobackup`:
@@ -363,6 +364,26 @@ restore everything.
 ## Uninstall
 
 ```bash
+remove-autobackup          # asks once, then removes the agent, app and scripts
+remove-autobackup --purge  # also drops the log file and the keychain entry
+```
+
+It unloads and disables the LaunchAgent, removes the plist, the
+`MountTimeMachine.app` wrapper and the settings, and deletes the scripts from
+`/usr/local/bin` (the only step that needs `sudo`). Run it as **yourself**, not
+with `sudo`. `--dry-run` shows what would be removed without touching anything.
+
+Automatic Time Machine backups are left exactly as they are. If you ran
+`stop-autobackup` before, they stay off until you run `sudo tmutil enable` (or
+tick "Back Up Automatically" in System Settings → General → Time Machine).
+
+The log file and the stored image passphrase are kept unless you pass
+`--purge`. To also drop the privacy grant, remove `MountTimeMachine` from
+System Settings → Privacy & Security → Files and Folders.
+
+The same steps by hand:
+
+```bash
 launchctl bootout gui/$(id -u)/org.kochtobi.mount-time-machine
 launchctl disable gui/$(id -u)/org.kochtobi.mount-time-machine 2>/dev/null || true
 rm ~/Library/LaunchAgents/org.kochtobi.mount-time-machine.plist
@@ -370,18 +391,11 @@ rm -rf ~/Applications/MountTimeMachine.app
 rm -rf ~/.config/auto-mount-on-login
 sudo rm /usr/local/bin/mount-time-machine.sh \
         /usr/local/bin/start-autobackup \
-        /usr/local/bin/stop-autobackup
-```
+        /usr/local/bin/stop-autobackup \
+        /usr/local/bin/remove-autobackup
 
-This removes the agent only. If you previously ran `stop-autobackup`, automatic
-backups stay off until you run `sudo tmutil enable` (or tick "Back Up
-Automatically" in System Settings → General → Time Machine). To also drop the
-privacy grant, remove `MountTimeMachine` from System Settings → Privacy &
-Security → Files and Folders.
-
-Optionally delete the stored image passphrase:
-
-```bash
+# optional: log file and stored image passphrase
+rm ~/Library/Logs/auto-mount-on-login.log
 security delete-generic-password -s auto-mount-on-login -a ab1234
 ```
 
