@@ -170,14 +170,38 @@ valid_subnet() {
 # Configuration
 # ---------------------------------------------------------------------------
 
-list_volumes() {
-  local volume
-  info "Currently mounted volumes:"
+explain_volume_name() {
+  local volume found=0
   for volume in /Volumes/*; do
-    if [[ -e $volume ]]; then
-      info "  ${volume##*/}"
+    [[ -e $volume ]] || continue
+    if (( ! found )); then
+      info "Mounted right now (only a hint - the backup is usually not attached):"
     fi
+    found=1
+    info "  ${volume##*/}"
   done
+  if (( ! found )); then
+    info "Nothing is mounted under /Volumes right now. That is normal: the backup"
+    info "image is only attached on the university network."
+  fi
+  info ""
+  info "Enter the name the Time Machine volume gets in /Volumes once the image is"
+  info "attached - Finder and Disk Utility show the same name. This is the volume"
+  info "name, not the image file name (you are asked for that later)."
+  info ""
+}
+
+# Warn once, after all questions, if the volume does not exist yet. This is the
+# normal case while the image is not attached, so it is a hint, not an error.
+check_volume_presence() {
+  local volume="/Volumes/$TM_VOLUME"
+  if [[ -d $volume ]]; then
+    return 0
+  fi
+  info "Note: $volume does not exist yet. That is expected while the backup image"
+  info "is not attached. If the agent later fails to find the volume, mount the"
+  info "image once by hand, compare with the name Finder shows, and re-run this"
+  info "installer with the corrected name."
 }
 
 collect_config() {
@@ -192,8 +216,8 @@ collect_config() {
     if (( ! TTY_AVAILABLE )); then
       die "TM_VOLUME is not set and no terminal is available for prompts"
     fi
-    list_volumes
-    TM_VOLUME=$(ask_until_valid "Time Machine volume name (see list above)" "" valid_component)
+    explain_volume_name
+    TM_VOLUME=$(ask_until_valid "Time Machine volume name (as it appears in /Volumes)" "" valid_component)
   elif ! valid_component "$TM_VOLUME"; then
     die "TM_VOLUME must be a volume name without '/' (got '$TM_VOLUME')"
   fi
@@ -231,12 +255,18 @@ collect_config() {
   if [[ -n $IMAGE_NAME ]] && ! valid_component "$IMAGE_NAME"; then
     die "IMAGE_NAME must be a plain file name (got '$IMAGE_NAME')"
   fi
+
+  check_volume_presence
 }
 
 show_summary() {
+  local volume_note=''
+  if [[ ! -d /Volumes/$TM_VOLUME ]]; then
+    volume_note=' (not mounted right now)'
+  fi
   info ""
   info "Configuration:"
-  info "  Time Machine volume : $TM_VOLUME"
+  info "  Time Machine volume : $TM_VOLUME$volume_note"
   info "  SMB URL             : ${SMB_SERVER%/}/$SMB_SHARE"
   info "  SMB user            : $SMB_USER"
   info "  Allowed subnet      : $SUBNET"

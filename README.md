@@ -98,12 +98,19 @@ It prompts for:
 
 | Prompt | Default |
 | --- | --- |
-| Time Machine volume name (the mounted volumes are listed first) | – |
+| Time Machine volume name (as it appears in `/Volumes` once the image is attached) | – |
 | SMB user id | – |
 | SMB server URL | `smb://workgroup-storage.qbic.uni-tuebingen.de` |
 | SMB share name | the SMB user id |
 | Allowed subnet (CIDR) | `134.2.0.0/16` |
 | Image file name (optional, empty = auto-detect) | empty |
+
+The volume name is the name Finder and Disk Utility show for the attached
+backup image — **not** the image file name (you are asked for that separately).
+The volume does not need to be mounted while installing, so the installer only
+lists the currently mounted volumes as a hint. If you do not know the name yet,
+mount the image once by hand, run `ls /Volumes`, and re-run the installer with
+the name that appeared.
 
 Then it prints a summary, asks for confirmation, verifies the downloaded
 files, installs the script to `/usr/local/bin` (using `sudo` only if needed)
@@ -191,6 +198,10 @@ volume is already mounted or the Mac is outside `SUBNET`.
 - **Nothing happens.** Either you are outside `SUBNET`, or `TM_VOLUME` does not
   match the mounted volume name exactly (check `ls /Volumes` and
   `diskutil info /Volumes/...`).
+- **The volume name is unknown.** It only exists while the image is attached,
+  so mount it once by hand, compare `ls /Volumes` with the name Finder shows,
+  and correct `TM_VOLUME` (re-run the installer or edit the plist). Matching is
+  exact and case-sensitive.
 - **The image password dialog appears every time.** The passphrase is not in
   the keychain, or it is stored under a different account. Run
   `--store-image-password` with the same `SMB_USER`/`IMAGE_KEYCHAIN_ACCOUNT`
