@@ -85,6 +85,70 @@ sets in its `EnvironmentVariables` dictionary.
 
 ## Install
 
+### Quick install
+
+The installer asks for the settings below, downloads `mount-time-machine.sh`
+and the LaunchAgent from this repository, installs both and loads the agent:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/qbicsoftware/auto-mount-on-login/main/install.sh | bash
+```
+
+It prompts for:
+
+| Prompt | Default |
+| --- | --- |
+| Time Machine volume name (the mounted volumes are listed first) | – |
+| SMB user id | – |
+| SMB server URL | `smb://workgroup-storage.qbic.uni-tuebingen.de` |
+| SMB share name | the SMB user id |
+| Allowed subnet (CIDR) | `134.2.0.0/16` |
+| Image file name (optional, empty = auto-detect) | empty |
+
+Then it prints a summary, asks for confirmation, verifies the downloaded
+files, installs the script to `/usr/local/bin` (using `sudo` only if needed)
+and the LaunchAgent to `~/Library/LaunchAgents`, optionally stores the image
+passphrase in your login keychain, and runs `launchctl bootout` /
+`launchctl bootstrap`. Re-running it upgrades an existing installation.
+
+Options (pass them after `-s --`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/qbicsoftware/auto-mount-on-login/main/install.sh | bash -s -- --dry-run
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--ref REF` | Branch, tag or commit to download from (default `main`) |
+| `--repo OWNER/REPO` | Repository to download from (default `qbicsoftware/auto-mount-on-login`) |
+| `--dry-run` | Validate and print the steps without changing anything |
+| `--yes`, `-y` | Skip the final confirmation (the optional passphrase question is still asked) |
+| `--help`, `-h` | Show usage |
+
+Every prompt can be answered in advance through the environment variables from
+the [configuration table](#configuration) (`TM_VOLUME`, `SMB_USER`,
+`SMB_SERVER`, `SMB_SHARE`, `SUBNET`, `IMAGE_NAME`). Together with `--yes` this
+gives an unattended install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/qbicsoftware/auto-mount-on-login/main/install.sh |
+  TM_VOLUME="Time Machine" SMB_USER=ab1234 bash -s -- --yes
+```
+
+The installer refuses to run as `root` and only works on macOS (`--dry-run` is
+allowed anywhere). Because `curl | bash` executes whatever the server sends,
+read the script first if you prefer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/qbicsoftware/auto-mount-on-login/main/install.sh | less
+```
+
+While a change to the installer is under review, point `--ref` at its branch
+(`--ref feature/curl-installer`); the script and the plist are always fetched
+from the same ref.
+
+### Manual install
+
 ```bash
 git clone https://github.com/qbicsoftware/auto-mount-on-login.git
 cd auto-mount-on-login
