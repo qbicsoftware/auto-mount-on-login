@@ -15,7 +15,9 @@ nothing unless **both** of these are true:
 When both hold, it:
 
 1. mounts the SMB share (`SMB_SERVER`/`SMB_SHARE`, by default
-   `smb://workgroup-storage.qbic.uni-tuebingen.de/<SMB_USER>`),
+   `smb://workgroup-storage.qbic.uni-tuebingen.de/<SMB_USER>`), ejecting and
+   remounting it first if an existing mount cannot be listed (stale after
+   sleep or a dropped connection),
 2. looks for the Time Machine image inside that share, and
 3. attaches the image.
 
@@ -261,6 +263,13 @@ restore everything.
 - **ASIF image does not attach.** `.asif` needs macOS 26 or later; on older
   versions `diskutil image` does not exist and `hdiutil` cannot read ASIF.
 - **"more than one image found".** Set `IMAGE_NAME` to the file name.
+- **No image found although one exists.** Check the `contents of ...` lines the
+  log now prints: `._time-machine.asif` is SMB metadata for
+  `time-machine.asif`, not a second image, and is ignored. If the listing is
+  empty or `ls` reports an error, the mount is stale; the script ejects it and
+  mounts the share again once. As a shortcut, name the image explicitly by
+  adding `IMAGE_NAME` to the plist (or set it in the environment when running
+  the script by hand).
 - **Logs.** `~/Library/Logs/auto-mount-on-login.log`; the previous file is kept
   as `.log.1` after rotation.
 
