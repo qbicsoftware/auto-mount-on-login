@@ -1,31 +1,42 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-    <dict>
+<dict>
     <key>Label</key>
-    <string>org.kochtobi.mount-time-machine.plist</string>
+    <string>org.kochtobi.mount-time-machine</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/mount-time-machine.sh</string>
+    </array>
+
+    <!--
+        Replace REPLACE_WITH_* below. Optional settings (SMB_SHARE, IMAGE_NAME,
+        LOG_FILE, IMAGE_KEYCHAIN_SERVICE, ...) can be added here as well; see
+        README.md.
+    -->
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/sbin:/bin:/usr/bin:/usr/local/bin</string>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+
+        <key>TM_VOLUME</key>
+        <string>REPLACE_WITH_TIME_MACHINE_VOLUME_NAME</string>
+
+        <key>SMB_USER</key>
+        <string>REPLACE_WITH_YOUR_USER_ID</string>
+
+        <key>SMB_SERVER</key>
+        <string>smb://workgroup-storage.qbic.uni-tuebingen.de</string>
+
+        <key>SUBNET</key>
+        <string>134.2.0.0/16</string>
     </dict>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/local/bin/mounting-skript.sh</string>
-        <string><!-- smb://my-workdgroup-storage --></string>
-        <string><!-- your dmg name without the file type e.g. time-machine for time-machine.dmg --></string>
-        <string><!-- your username on the workgroup storage --></string>
-        <string><!-- your IP address; Can be a prefix or any other part of your IP address e.g. 134.2.116. --></string>
-    </array>    
-    <key>WorkingDirectory</key>
-    <string>/tmp</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/org.kochtobi/mount-time-machine.error.log</string>
-    <key>StandardOutPath</key>
-    <string>/tmp/org.kochtobi/mount-time-machine.out.log</string>
-    <key>StartInterval</key>
-    <integer>60</integer>
+
     <key>RunAtLoad</key>
     <true/>
-    </dict>
+
+    <key>StartInterval</key>
+    <integer>60</integer>
+</dict>
 </plist>
