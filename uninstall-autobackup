@@ -26,6 +26,7 @@ BIN_DIR=${BIN_DIR:-/usr/local/bin}
 SCRIPTS=(mount-time-machine.sh start-autobackup stop-autobackup uninstall-autobackup)
 APP_DIR=${APP_DIR:-$HOME/Applications/MountTimeMachine.app}
 CONFIG_DIR=${CONFIG_DIR:-$HOME/.config/auto-mount-on-login}
+STATE_FILE=${STATE_FILE:-$HOME/Library/Application Support/auto-mount-on-login/volume}
 LOG_FILE=${LOG_FILE:-$HOME/Library/Logs/auto-mount-on-login.log}
 IMAGE_KEYCHAIN_SERVICE=${IMAGE_KEYCHAIN_SERVICE:-auto-mount-on-login}
 
@@ -53,6 +54,7 @@ Environment:
   BIN_DIR         Directory of the installed scripts [$BIN_DIR]
   APP_DIR         Wrapper app bundle [$APP_DIR]
   CONFIG_DIR      Settings directory [$CONFIG_DIR]
+  STATE_FILE      Learned volume name [$STATE_FILE]
   LOG_FILE        Log file [$LOG_FILE]
 EOF
 }
@@ -166,6 +168,7 @@ main() {
   remove_path "$PLIST"
   remove_path "$APP_DIR"
   remove_path "$CONFIG_DIR"
+  remove_path "${STATE_FILE%/*}"
 
   local script
   for script in "${SCRIPTS[@]}"; do

@@ -20,6 +20,7 @@ set -euo pipefail
 PROG=$(basename "$0")
 LABEL=${LABEL:-org.kochtobi.mount-time-machine}
 PLIST=${PLIST:-$HOME/Library/LaunchAgents/$LABEL.plist}
+STATE_FILE=${STATE_FILE:-$HOME/Library/Application Support/auto-mount-on-login/volume}
 UID_NUM=$(id -u)
 
 DRY_RUN=0
@@ -34,12 +35,13 @@ backups off. The agent stays disabled at login until 'start-autobackup' runs.
 
   -n, --dry-run   Print what would be done, change nothing (works on any OS)
       --unmount   Also eject the Time Machine volume (TM_VOLUME from the
-                  LaunchAgent) after the backup is stopped
+                  LaunchAgent, or the name learned from the last mount)
   -h, --help      Show this help
 
 Environment:
   LABEL           LaunchAgent label [$LABEL]
   PLIST           LaunchAgent path [$PLIST]
+  STATE_FILE      Learned volume name [$STATE_FILE]
 EOF
 }
 
@@ -72,9 +74,12 @@ backup_running() {
 unmount_backup_volume() {
   local volume
   volume=$(plist_value TM_VOLUME) || volume=''
+  if [[ -z $volume && -r $STATE_FILE ]]; then
+    volume=$(head -n 1 "$STATE_FILE" 2>/dev/null) || volume=''
+  fi
 
   if [[ -z $volume ]]; then
-    warn "TM_VOLUME is not set in $PLIST; not unmounting anything"
+    warn "no Time Machine volume name in $PLIST or $STATE_FILE; not unmounting anything"
     return 0
   fi
   if [[ ! -d /Volumes/$volume ]]; then
