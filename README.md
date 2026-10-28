@@ -16,8 +16,11 @@ the questions, set them up front:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/qbicsoftware/auto-mount-on-login/main/install.sh |
-  TM_VOLUME="Time Machine" SMB_USER=ab1234 bash -s -- --yes
+  SMB_USER=ab1234 bash -s -- --yes
 ```
+
+`TM_VOLUME` can be added to that line (`TM_VOLUME="time-machine"`) if you already
+know the name; otherwise the first successful mount detects it.
 
 Then:
 
@@ -37,7 +40,7 @@ Then:
 Every minute the LaunchAgent runs `mount-time-machine.sh`, which acts only when
 **both**:
 
-1. the Time Machine volume (`TM_VOLUME`) is **not** mounted, and
+1. the Time Machine volume (`TM_VOLUME`, when set) is **not** mounted, and
 2. the Mac has an IPv4 address inside `SUBNET` (default `134.2.0.0/16`).
 
 Otherwise it exits quietly, so a mounted volume does not grow the log. When it
@@ -54,6 +57,14 @@ A stale mount (after sleep or a dropped connection) is ejected and remounted
 first; a *permission* error is reported instead, since the mount itself is fine.
 If several images are found, set `IMAGE_NAME`.
 
+The name a disk image mounts as comes from the image, not from a setting. After
+a successful attach the script reads the mount point from the attach command's
+own output (`hdiutil` reports it; for the asynchronous `open` fallback it diffs
+`/Volumes` around the attach) and remembers the name in
+`~/Library/Application Support/auto-mount-on-login/volume`. Later runs use that
+name for the first check, so `TM_VOLUME` does not have to be known at install
+time.
+
 ## Configuration
 
 All settings are environment variables, written by the installer into the
@@ -61,7 +72,7 @@ LaunchAgent's `EnvironmentVariables` dictionary:
 
 | Variable | Required | Default | Meaning |
 | --- | --- | --- | --- |
-| `TM_VOLUME` | yes | – | Mounted Time Machine volume name, e.g. `Time Machine` |
+| `TM_VOLUME` | no | detected | Expected mounted volume name, e.g. `Time Machine`; learned on the first successful mount when unset |
 | `SMB_USER` | yes | – | Your user id on the SMB server |
 | `SMB_SERVER` | no | `smb://workgroup-storage.qbic.uni-tuebingen.de` | Base SMB URL |
 | `SMB_SHARE` | no | `SMB_USER` | Share name appended to `SMB_SERVER` |
@@ -74,9 +85,12 @@ LaunchAgent's `EnvironmentVariables` dictionary:
 | `PROMPT_TIMEOUT` | no | `300` | Seconds to wait after a password dialog |
 
 `TM_VOLUME` is the name in `/Volumes` once the image is attached (as Finder and
-Disk Utility show it), **not** the image file name. It does not need to be
-mounted while installing; if you do not know it yet, mount the image once by
-hand and run `ls /Volumes`.
+Disk Utility show it), **not** the image file name. It is optional: without it,
+the first successful attach learns the name and stores it in
+`~/Library/Application Support/auto-mount-on-login/volume`, and later runs use
+that. Set it only if you want the script to prefer a particular name; a mismatch
+is logged and the volume that actually appeared is used. To look the name up by
+hand, mount the image once and run `ls /Volumes`.
 
 The app wrapper cannot read the plist, so the installer writes the same settings
 to `~/.config/auto-mount-on-login/config.env`, which the wrapper sources. Edit
@@ -159,6 +173,8 @@ git clone https://github.com/qbicsoftware/auto-mount-on-login.git
 cd auto-mount-on-login
 
 $EDITOR org.kochtobi.mount-time-machine.plist   # fill in the REPLACE_WITH_* values
+                                                 # (TM_VOLUME may be deleted; the
+                                                 # name is then detected on first mount)
 plutil -lint org.kochtobi.mount-time-machine.plist
 
 sudo install -m 755 mount-time-machine.sh start-autobackup stop-autobackup \
@@ -174,8 +190,11 @@ install runs the script directly and needs [Full Disk Access](#network-volume-pe
 Run it once by hand to answer the password dialogs:
 
 ```bash
-TM_VOLUME="Time Machine" SMB_USER=ab1234 /usr/local/bin/mount-time-machine.sh
+SMB_USER=ab1234 /usr/local/bin/mount-time-machine.sh
 ```
+
+Add `TM_VOLUME="Time Machine"` in front of that command if you want to pin the
+name; without it the script learns it from the attach.
 
 ## Managing the agent
 
@@ -192,8 +211,10 @@ only for `tmutil`, which needs Full Disk Access for your terminal:
 
 ## Troubleshooting
 
-- **Nothing happens.** You are outside `SUBNET`, or `TM_VOLUME` does not match
-  `ls /Volumes` (exact, case-sensitive).
+- **Nothing happens.** You are outside `SUBNET`, or the expected volume name does
+  not match `ls /Volumes` (exact, case-sensitive). With `TM_VOLUME` unset, the
+  learned name lives in `~/Library/Application Support/auto-mount-on-login/volume`;
+  delete that file to make the next run detect it again.
 - **`Operation not permitted` in the log.** The TCC block — see
   [Network volume permission](#network-volume-permission). The script stops
   instead of remounting, because the mount is fine.
