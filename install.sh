@@ -25,7 +25,7 @@ SCRIPT_NAME='mount-time-machine.sh'
 PLIST_NAME='org.kochtobi.mount-time-machine.plist'
 APPLESCRIPT_NAME='mount-time-machine.applescript'
 INFO_PLIST_NAME='MountTimeMachine-Info.plist'
-HELPERS=(start-autobackup stop-autobackup remove-autobackup)
+HELPERS=(start-autobackup stop-autobackup uninstall-autobackup)
 BIN_DST="/usr/local/bin/$SCRIPT_NAME"
 BIN_DIR=${BIN_DST%/*}
 AGENT_DIR="$HOME/Library/LaunchAgents"
@@ -636,7 +636,7 @@ print_done() {
   info "Logs   : $LOG_DIR/auto-mount-on-login.log"
   info "Pause  : $BIN_DIR/stop-autobackup   (also turns automatic backups off)"
   info "Resume : $BIN_DIR/start-autobackup"
-  info "Uninstall: $BIN_DIR/remove-autobackup"
+  info "Uninstall: $BIN_DIR/uninstall-autobackup"
   info "           (add --purge to also drop the log and the keychain entry)"
   info ""
   info "The first mount may show Apple's password dialog for the share or the"

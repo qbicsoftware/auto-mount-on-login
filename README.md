@@ -176,7 +176,7 @@ plutil -lint org.kochtobi.mount-time-machine.plist
 
 # 2. install
 sudo mkdir -p /usr/local/bin
-sudo install -m 755 mount-time-machine.sh start-autobackup stop-autobackup remove-autobackup /usr/local/bin/
+sudo install -m 755 mount-time-machine.sh start-autobackup stop-autobackup uninstall-autobackup /usr/local/bin/
 install -m 644 org.kochtobi.mount-time-machine.plist ~/Library/LaunchAgents/
 
 # 3. (re)load the agent
@@ -283,9 +283,9 @@ volume is already mounted or the Mac is outside `SUBNET`.
 Three helpers are installed next to `mount-time-machine.sh`:
 
 ```bash
-stop-autobackup     # disable the agent and automatic backups
-start-autobackup    # enable both again
-remove-autobackup   # uninstall everything (see below)
+stop-autobackup        # disable the agent and automatic backups
+start-autobackup       # enable both again
+uninstall-autobackup   # uninstall everything (see Uninstall below)
 ```
 
 `stop-autobackup`:
@@ -363,9 +363,13 @@ restore everything.
 
 ## Uninstall
 
+`uninstall-autobackup` is installed next to the other helpers and is the inverse
+of `install.sh`:
+
 ```bash
-remove-autobackup          # asks once, then removes the agent, app and scripts
-remove-autobackup --purge  # also drops the log file and the keychain entry
+uninstall-autobackup          # asks once, then removes the agent, app and scripts
+uninstall-autobackup --purge  # also drops the log file and the keychain entry
+uninstall-autobackup --dry-run
 ```
 
 It unloads and disables the LaunchAgent, removes the plist, the
@@ -392,7 +396,7 @@ rm -rf ~/.config/auto-mount-on-login
 sudo rm /usr/local/bin/mount-time-machine.sh \
         /usr/local/bin/start-autobackup \
         /usr/local/bin/stop-autobackup \
-        /usr/local/bin/remove-autobackup
+        /usr/local/bin/uninstall-autobackup
 
 # optional: log file and stored image passphrase
 rm ~/Library/Logs/auto-mount-on-login.log

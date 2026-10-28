@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# remove-autobackup
+# uninstall-autobackup
 #
 # Uninstall auto-mount-on-login: the inverse of install.sh.
 #   1. unload and disable the LaunchAgent,
@@ -23,7 +23,7 @@ PLIST=${PLIST:-$HOME/Library/LaunchAgents/$LABEL.plist}
 UID_NUM=$(id -u)
 
 BIN_DIR=${BIN_DIR:-/usr/local/bin}
-SCRIPTS=(mount-time-machine.sh start-autobackup stop-autobackup remove-autobackup)
+SCRIPTS=(mount-time-machine.sh start-autobackup stop-autobackup uninstall-autobackup)
 APP_DIR=${APP_DIR:-$HOME/Applications/MountTimeMachine.app}
 CONFIG_DIR=${CONFIG_DIR:-$HOME/.config/auto-mount-on-login}
 LOG_FILE=${LOG_FILE:-$HOME/Library/Logs/auto-mount-on-login.log}
