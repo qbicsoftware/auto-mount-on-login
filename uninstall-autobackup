@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+#
+# uninstall-autobackup
+#
+# Uninstall auto-mount-on-login: the inverse of install.sh.
+#   1. unload and disable the LaunchAgent,
+#   2. remove the LaunchAgent plist, the wrapper app and the settings,
+#   3. remove the installed scripts from /usr/local/bin (the only sudo step),
+#   4. with --purge, also remove the log file and the stored image passphrase.
+#
+# Automatic Time Machine backups are left exactly as they are. If you ran
+# stop-autobackup before, they stay off until you run 'sudo tmutil enable' (or
+# tick "Back Up Automatically" in System Settings -> General -> Time Machine).
+#
+# Run this as your normal user; the script calls sudo only to delete the files
+# in /usr/local/bin.
+
+set -euo pipefail
+
+PROG=$(basename "$0")
+LABEL=${LABEL:-org.kochtobi.mount-time-machine}
+PLIST=${PLIST:-$HOME/Library/LaunchAgents/$LABEL.plist}
+UID_NUM=$(id -u)
+
+BIN_DIR=${BIN_DIR:-/usr/local/bin}
+SCRIPTS=(mount-time-machine.sh start-autobackup stop-autobackup uninstall-autobackup)
+APP_DIR=${APP_DIR:-$HOME/Applications/MountTimeMachine.app}
+CONFIG_DIR=${CONFIG_DIR:-$HOME/.config/auto-mount-on-login}
+LOG_FILE=${LOG_FILE:-$HOME/Library/Logs/auto-mount-on-login.log}
+IMAGE_KEYCHAIN_SERVICE=${IMAGE_KEYCHAIN_SERVICE:-auto-mount-on-login}
+
+DRY_RUN=0
+ASSUME_YES=0
+PURGE=0
+TTY_AVAILABLE=0
+
+usage() {
+  cat <<EOF
+Usage: $PROG [options]
+
+Removes the auto-mount-on-login LaunchAgent, the MountTimeMachine.app wrapper
+and the installed scripts. Start it without options to be asked once first.
+
+  -y, --yes       Do not ask for confirmation
+      --purge     Also delete the log file and the stored image passphrase
+                  from the login keychain
+  -n, --dry-run   Print what would be removed, change nothing (works on any OS)
+  -h, --help      Show this help
+
+Environment:
+  LABEL           LaunchAgent label [$LABEL]
+  PLIST           LaunchAgent path [$PLIST]
+  BIN_DIR         Directory of the installed scripts [$BIN_DIR]
+  APP_DIR         Wrapper app bundle [$APP_DIR]
+  CONFIG_DIR      Settings directory [$CONFIG_DIR]
+  LOG_FILE        Log file [$LOG_FILE]
+EOF
+}
+
+info() { printf '%s\n' "$*"; }
+warn() { printf 'WARNING: %s\n' "$*" >&2; }
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+# run CMD... - execute, or only describe it with --dry-run
+run() {
+  if (( DRY_RUN )); then
+    printf 'would run: %s\n' "$*"
+    return 0
+  fi
+  "$@"
+}
+
+agent_loaded() {
+  launchctl print "gui/$UID_NUM/$LABEL" >/dev/null 2>&1
+}
+
+# remove_path PATH [sudo] - delete a file or directory if it exists
+remove_path() {
+  local path=$1 escalate=${2:-}
+  if [[ ! -e $path ]]; then
+    info "  $path is not installed"
+    return 0
+  fi
+  info "  removing $path"
+  (( DRY_RUN )) && return 0
+  if [[ $escalate == sudo ]]; then
+    sudo rm -rf "$path"
+  else
+    rm -rf "$path"
+  fi
+}
+
+confirm() {
+  local answer
+  (( ASSUME_YES )) && return 0
+  if (( ! TTY_AVAILABLE )); then
+    warn "no terminal to confirm on; re-run with --yes to remove without asking"
+    return 1
+  fi
+  printf 'Remove auto-mount-on-login (agent, app and scripts)? [y/N]: ' >&2
+  IFS= read -r answer <&3 || answer=''
+  [[ $answer == [yY] || $answer == [yY][eE][sS] ]]
+}
+
+purge_keychain() {
+  if ! security find-generic-password -s "$IMAGE_KEYCHAIN_SERVICE" >/dev/null 2>&1; then
+    info "  no stored image passphrase"
+    return 0
+  fi
+  info "  deleting the stored image passphrase (service '$IMAGE_KEYCHAIN_SERVICE')"
+  run security delete-generic-password -s "$IMAGE_KEYCHAIN_SERVICE" >/dev/null 2>&1 || true
+}
+
+main() {
+  while (( $# )); do
+    case $1 in
+      -y | --yes)
+        ASSUME_YES=1
+        shift
+        ;;
+      --purge)
+        PURGE=1
+        shift
+        ;;
+      -n | --dry-run)
+        DRY_RUN=1
+        shift
+        ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *)
+        usage >&2
+        die "unknown option: $1"
+        ;;
+    esac
+  done
+
+  if (( ! DRY_RUN )); then
+    [[ $(uname -s) == Darwin ]] || die "this script targets macOS (use --dry-run to preview)"
+    (( EUID != 0 )) || die "run this as your user, not with sudo; the script uses sudo where needed"
+  fi
+
+  # stdin may be the piped script in some setups; read the answer from the tty.
+  if { exec 3<>/dev/tty; } 2>/dev/null; then
+    TTY_AVAILABLE=1
+  fi
+
+  if ! confirm; then
+    info "Aborted."
+    exit 0
+  fi
+
+  info "Removing auto-mount-on-login"
+
+  if agent_loaded; then
+    info "  unloading the LaunchAgent"
+    run launchctl bootout "gui/$UID_NUM/$LABEL"
+  else
+    info "  the LaunchAgent is not loaded"
+  fi
+  # Remember the disabled state too, in case the plist is restored by hand.
+  run launchctl disable "gui/$UID_NUM/$LABEL" 2>/dev/null || true
+
+  remove_path "$PLIST"
+  remove_path "$APP_DIR"
+  remove_path "$CONFIG_DIR"
+
+  local script
+  for script in "${SCRIPTS[@]}"; do
+    remove_path "$BIN_DIR/$script" sudo
+  done
+
+  if (( PURGE )); then
+    remove_path "$LOG_FILE"
+    remove_path "$LOG_FILE.1"
+    purge_keychain
+  fi
+
+  info ""
+  if (( DRY_RUN )); then
+    info "Dry run: nothing was changed."
+    return 0
+  fi
+
+  info "auto-mount-on-login was removed."
+  info ""
+  info "Automatic Time Machine backups were left as they were. If they are off"
+  info "and you want them back: sudo tmutil enable"
+  if (( ! PURGE )); then
+    info ""
+    info "Kept (use --purge to remove them too, next time run it first):"
+    info "  - $LOG_FILE"
+    info "  - the image passphrase in the login keychain (service $IMAGE_KEYCHAIN_SERVICE)"
+  fi
+  info ""
+  info "MountTimeMachine may still be listed under System Settings -> Privacy &"
+  info "Security -> Files and Folders; it is harmless now, remove it there if you"
+  info "prefer a clean list."
+}
+
+main "$@"

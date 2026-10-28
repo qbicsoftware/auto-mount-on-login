@@ -109,31 +109,24 @@ EOF
 # Lock: never let two runs stack up (and stack password dialogs)
 # ---------------------------------------------------------------------------
 
-release_lock() {
-  if [[ -d $LOCK_DIR ]]; then
-    rm -rf "$LOCK_DIR"
-  fi
-}
+release_lock() { rm -rf "$LOCK_DIR"; }
 
+# One run at a time. A run can sit on Apple's password dialog while the agent
+# fires again every 60 seconds; without this, dialogs would stack up.
 acquire_lock() {
-  if mkdir "$LOCK_DIR" 2>/dev/null; then
-    printf '%s\n' "$$" >"$LOCK_DIR/pid"
-    trap release_lock EXIT
-    return 0
-  fi
-
   local pid=''
-  if [[ -r $LOCK_DIR/pid ]]; then
-    pid=$(<"$LOCK_DIR/pid")
-  fi
-  if [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null; then
-    log "previous run (pid $pid) is still busy, skipping this interval"
-    exit 0
+
+  if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    [[ -r $LOCK_DIR/pid ]] && pid=$(<"$LOCK_DIR/pid")
+    if [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null; then
+      log "previous run (pid $pid) is still busy, skipping this interval"
+      exit 0
+    fi
+    warn "removing stale lock $LOCK_DIR"
+    rm -rf "$LOCK_DIR"
+    mkdir "$LOCK_DIR"
   fi
 
-  warn "removing stale lock $LOCK_DIR"
-  rm -rf "$LOCK_DIR"
-  mkdir "$LOCK_DIR"
   printf '%s\n' "$$" >"$LOCK_DIR/pid"
   trap release_lock EXIT
 }
@@ -154,12 +147,8 @@ ip_in_cidr() {
   local ip=$1 cidr=$2 network prefix mask ip_int net_int
   network=${cidr%/*}
   prefix=${cidr#*/}
-
-  if (( prefix == 0 )); then
-    mask=0
-  else
-    mask=$(( (0xFFFFFFFF << (32 - prefix)) & 0xFFFFFFFF ))
-  fi
+  # A /0 mask needs no special case: bash evaluates (0xFFFFFFFF << 32) as 0.
+  mask=$(( (0xFFFFFFFF << (32 - prefix)) & 0xFFFFFFFF ))
 
   ip_int=$(ipv4_to_int "$ip") || return 1
   net_int=$(ipv4_to_int "$network") || return 1
@@ -212,10 +201,11 @@ share_mount_point() {
   return 1
 }
 
-wait_for_volume() {
-  local timeout=${1:-$MOUNT_TIMEOUT} elapsed
+# Wait up to TIMEOUT seconds for PREDICATE to succeed.
+wait_for() {
+  local predicate=$1 timeout=${2:-$MOUNT_TIMEOUT} elapsed
   for ((elapsed = 0; elapsed < timeout; elapsed++)); do
-    if volume_is_mounted; then
+    if "$predicate"; then
       return 0
     fi
     sleep 1
@@ -228,27 +218,22 @@ wait_for_volume() {
 # ---------------------------------------------------------------------------
 
 mount_share() {
-  local url elapsed
+  local url
   url="${SMB_SERVER%/}/${SMB_SHARE}"
 
   log "mounting $url"
   # mount volume uses the login keychain; if no password is stored macOS shows
   # its own authentication dialog. It returns once the mount has finished (or
-  # failed), so the loop below only covers slow servers.
+  # failed), so the wait below only covers slow servers.
   if ! osascript -e "mount volume \"$url\"" >/dev/null 2>&1; then
     warn "could not mount $url"
     return 1
   fi
 
-  for ((elapsed = 0; elapsed < MOUNT_TIMEOUT; elapsed++)); do
-    if share_mount_point >/dev/null; then
-      return 0
-    fi
-    sleep 1
-  done
-
-  warn "timed out after ${MOUNT_TIMEOUT}s waiting for $url"
-  return 1
+  if ! wait_for share_mount_point >/dev/null; then
+    warn "timed out after ${MOUNT_TIMEOUT}s waiting for $url"
+    return 1
+  fi
 }
 
 # listing_error DIR -> prints why DIR cannot be listed, returns non-zero.
@@ -279,9 +264,8 @@ error_is_permission() {
 
 warn_permission() {
   warn "$1"
-  warn "macOS is blocking this process from reading network volumes (TCC)."
-  warn "Grant the agent 'Network Volumes' access - see the README section"
-  warn "'Network volume permission'. Not remounting: the mount itself is fine."
+  warn "macOS is blocking this process from reading network volumes (TCC) -"
+  warn "grant 'Network Volumes' access (README: 'Network volume permission'). Not remounting."
 }
 
 remount_share() {
@@ -364,7 +348,7 @@ log_directory() {
 }
 
 find_image() {
-  local dir=$1 attempt line
+  local dir=$1 attempt
   local -a images=()
 
   if [[ -n $IMAGE_NAME ]]; then
@@ -381,12 +365,7 @@ find_image() {
   # below it. Retry once: right after mounting, an SMB directory can still be
   # empty or not ready.
   for attempt in 1 2; do
-    images=()
-    while IFS= read -r line; do
-      if [[ -n $line ]]; then
-        images+=("$line")
-      fi
-    done < <(scan_images "$dir" 1)
+    mapfile -t images < <(scan_images "$dir" 1)
 
     if [[ ${#images[@]} -gt 0 ]]; then
       break
@@ -426,43 +405,31 @@ keychain_passphrase() {
     -w 2>/dev/null
 }
 
-attach_with_passphrase() {
-  local image=$1 passphrase=$2
-  case $image in
-    *.[aA][sS][iI][fF])
-      # ASIF is only supported by `diskutil image`; hdiutil cannot attach it.
-      printf '%s' "$passphrase" | diskutil image --stdinpassphrase attach "$image"
-      ;;
-    *)
-      printf '%s' "$passphrase" | hdiutil attach -stdinpass "$image"
-      ;;
-  esac
-}
-
-attach_from_terminal() {
-  local image=$1
-  case $image in
-    *.[aA][sS][iI][fF])
-      diskutil image attach "$image"
-      ;;
-    *)
-      hdiutil attach "$image"
-      ;;
-  esac
-}
-
+# Attach IMAGE and set ATTACH_MODE: "keychain" when the stored passphrase
+# worked, "prompt" when macOS is asked for it. ASIF needs `diskutil image`;
+# every other format uses hdiutil, and the two want their flags in a different
+# place, so both command lines are spelled out.
 attach_image() {
   local image=$1 base passphrase=''
+  local -a with_pass plain
   base=$(basename "$image")
+  case $image in
+    *.[aA][sS][iI][fF])
+      with_pass=(diskutil image --stdinpassphrase attach)
+      plain=(diskutil image attach)
+      ;;
+    *)
+      with_pass=(hdiutil attach -stdinpass)
+      plain=(hdiutil attach)
+      ;;
+  esac
 
   if passphrase=$(keychain_passphrase); then
     log "using the passphrase stored in the login keychain for $base"
-    if attach_with_passphrase "$image" "$passphrase"; then
-      passphrase=''
+    if printf '%s' "$passphrase" | "${with_pass[@]}" "$image"; then
       ATTACH_MODE=keychain
       return 0
     fi
-    passphrase=''
     warn "the stored passphrase did not unlock $base"
   else
     log "no passphrase stored for $base (service '$IMAGE_KEYCHAIN_SERVICE', account '$IMAGE_KEYCHAIN_ACCOUNT')"
@@ -472,7 +439,7 @@ attach_image() {
   # prompt there; from launchd there is no terminal, so ask the GUI to open
   # the image and macOS shows its standard password dialog.
   if [[ -t 0 && -t 1 ]]; then
-    attach_from_terminal "$image"
+    "${plain[@]}" "$image"
   else
     log "asking macOS for the passphrase of $base"
     open "$image"
@@ -579,13 +546,12 @@ main() {
 
   attach_image "$image" || die "could not attach $image"
 
+  timeout=$MOUNT_TIMEOUT
   if [[ $ATTACH_MODE == prompt ]]; then
     timeout=$PROMPT_TIMEOUT
-  else
-    timeout=$MOUNT_TIMEOUT
   fi
 
-  if wait_for_volume "$timeout"; then
+  if wait_for volume_is_mounted "$timeout"; then
     log "Time Machine volume '$TM_VOLUME' is mounted"
   else
     warn "image $image was attached, but volume '$TM_VOLUME' did not appear"
