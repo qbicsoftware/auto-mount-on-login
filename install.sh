@@ -6,7 +6,9 @@
 #
 # The installer asks for the settings that mount-time-machine.sh needs, then
 # downloads the script and the LaunchAgent template from the same repo/ref,
-# installs both and loads the agent. Run with --help for options.
+# installs both and loads the agent. It does not ask for the Time Machine
+# volume name; mount-time-machine.sh learns that from the first attach.
+# Run with --help for options.
 #
 # The script is meant to be piped into bash, so stdin is the script itself.
 # All prompts therefore read from /dev/tty.
@@ -83,9 +85,9 @@ Options:
   --help, -h       Show this help
 
 Environment variables (used instead of prompting when set):
-  TM_VOLUME, SMB_USER, SMB_SERVER, SMB_SHARE, SUBNET, IMAGE_NAME
-                   (TM_VOLUME is optional; without it the first mount detects
-                   the volume name)
+  SMB_USER, SMB_SERVER, SMB_SHARE, SUBNET, IMAGE_NAME
+  TM_VOLUME        optional override; the installer never asks for it. Without
+                   it the volume name is learned on the first successful mount.
 EOF
 }
 
@@ -193,47 +195,20 @@ valid_subnet() {
 # Configuration
 # ---------------------------------------------------------------------------
 
-explain_volume_name() {
-  local volume found=0
-  for volume in /Volumes/*; do
-    [[ -e $volume ]] || continue
-    if (( ! found )); then
-      info "Mounted right now (only a hint - the backup is usually not attached):"
-    fi
-    found=1
-    info "  ${volume##*/}"
-  done
-  if (( ! found )); then
-    info "Nothing is mounted under /Volumes right now. That is normal: the backup"
-    info "image is only attached on the university network."
-  fi
-  info ""
-  info "Enter the name the Time Machine volume gets in /Volumes once the image is"
-  info "attached - Finder and Disk Utility show the same name. This is the volume"
-  info "name, not the image file name (you are asked for that later)."
-  info ""
-  info "Leave this empty to detect the name on the first successful mount; it is"
-  info "then remembered in ~/Library/Application Support/auto-mount-on-login."
-  info ""
-}
-
 # Warn once, after all questions, if the volume does not exist yet. This is the
 # normal case while the image is not attached, so it is a hint, not an error.
+# Not asked at all: the name belongs to the image and is learned on first mount.
 check_volume_presence() {
-  if [[ -z $TM_VOLUME ]]; then
-    info "Note: no volume name given. The first mount learns it from the attached"
-    info "image and remembers it for later runs."
-    return 0
-  fi
+  [[ -n $TM_VOLUME ]] || return 0
 
   local volume="/Volumes/$TM_VOLUME"
   if [[ -d $volume ]]; then
     return 0
   fi
-  info "Note: $volume does not exist yet. That is expected while the backup image"
-  info "is not attached. If the agent later fails to find the volume, mount the"
-  info "image once by hand, compare with the name Finder shows, and re-run this"
-  info "installer with the corrected name."
+  info "Note: $volume does not exist yet. That is expected while the backup"
+  info "image is not attached. If the agent later fails to find the volume, mount"
+  info "the image once by hand and re-run this installer with TM_VOLUME set to"
+  info "the corrected name."
 }
 
 collect_config() {
@@ -244,12 +219,9 @@ collect_config() {
   SUBNET=${SUBNET:-}
   IMAGE_NAME=${IMAGE_NAME:-}
 
-  if [[ -z $TM_VOLUME ]]; then
-    if (( TTY_AVAILABLE )); then
-      explain_volume_name
-      TM_VOLUME=$(ask "Time Machine volume name (empty = detect automatically)" "")
-    fi
-  elif ! valid_component "$TM_VOLUME"; then
+  # Not asked: the name belongs to the image and the script learns it from the
+  # first attach. TM_VOLUME from the environment is still honoured as override.
+  if [[ -n $TM_VOLUME ]] && ! valid_component "$TM_VOLUME"; then
     die "TM_VOLUME must be a volume name without '/' (got '$TM_VOLUME')"
   fi
 
@@ -723,7 +695,6 @@ main() {
   open_tty
 
   info "auto-mount-on-login installer"
-  info ""
 
   collect_config
   show_summary
