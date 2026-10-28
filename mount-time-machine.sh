@@ -26,7 +26,7 @@ PROG=$(basename "$0")
 # Configuration
 # ---------------------------------------------------------------------------
 
-TM_VOLUME=${TM_VOLUME:-}                              # required: volume name
+TM_VOLUME=${TM_VOLUME:-}                              # expected volume name (optional)
 SMB_USER=${SMB_USER:-}                                # required: SMB user id
 SMB_SERVER=${SMB_SERVER:-smb://workgroup-storage.qbic.uni-tuebingen.de}
 SMB_SHARE=${SMB_SHARE:-$SMB_USER}                     # defaults to the user id
@@ -40,6 +40,16 @@ IMAGE_KEYCHAIN_ACCOUNT=${IMAGE_KEYCHAIN_ACCOUNT:-$SMB_USER}
 LOG_FILE=${LOG_FILE:-${HOME:-/tmp}/Library/Logs/auto-mount-on-login.log}
 MOUNT_TIMEOUT=${MOUNT_TIMEOUT:-45}                    # seconds
 PROMPT_TIMEOUT=${PROMPT_TIMEOUT:-300}                 # seconds, for GUI prompts
+
+# TM_VOLUME is only an expectation. The name a disk image actually mounts as is
+# decided by the image, so the first run learns it from the attach and stores it
+# here; later runs use it to exit early. Kept outside the LaunchAgent and
+# config.env, which install.sh rewrites.
+STATE_FILE=${STATE_FILE:-${HOME:-/tmp}/Library/Application Support/auto-mount-on-login/volume}
+
+# Set in main() right before attaching; used to spot a volume that only shows up
+# after an asynchronous attach (the `open` fallback).
+volumes_before=''
 
 TMP_BASE=${TMPDIR:-/tmp}
 LOCK_DIR="${TMP_BASE%/}/auto-mount-on-login.$(id -u).lock"
@@ -91,7 +101,9 @@ volume if needed. It is meant to be run by the LaunchAgent.
 
 Environment variables:
 
-  TM_VOLUME               name of the Time Machine volume (required)
+  TM_VOLUME               expected volume name (optional; otherwise learned from
+                          the first successful attach and cached in
+                          ~/Library/Application Support/auto-mount-on-login/volume)
   SMB_USER                user id on the SMB server (required)
   SMB_SERVER              server URL (default: $SMB_SERVER)
   SMB_SHARE               share name (default: SMB_USER)
@@ -179,12 +191,73 @@ mounted_volumes() {
 }
 
 volume_is_mounted() {
-  local volume
+  local name=${1-${TM_VOLUME:-}} volume
+  [[ -n $name ]] || return 1
   while IFS= read -r volume; do
-    if [[ $volume == "/Volumes/$TM_VOLUME" ]]; then
+    if [[ $volume == "/Volumes/$name" ]]; then
       return 0
     fi
   done < <(mounted_volumes)
+  return 1
+}
+
+# Volume name remembered from the last successful attach. Kept outside the
+# LaunchAgent and config.env: install.sh rewrites those, and this value is a
+# result, not a setting.
+learned_volume() {
+  [[ -r $STATE_FILE ]] || return 1
+  head -n 1 "$STATE_FILE" 2>/dev/null
+}
+
+remember_volume() {
+  if ! { mkdir -p "${STATE_FILE%/*}" && printf '%s\n' "$1" >"$STATE_FILE"; } 2>/dev/null; then
+    warn "could not remember the volume name in $STATE_FILE"
+  fi
+}
+
+# Volumes that are mounted now but were not when volumes_before was taken.
+new_volumes() {
+  comm -13 \
+    <(printf '%s\n' "$volumes_before" | sort) \
+    <(mounted_volumes | sort)
+}
+
+new_volume_appeared() {
+  [[ -n $(new_volumes) ]]
+}
+
+# choose_volume IMAGE MOUNT... -> prints the volume name to use.
+#
+# An explicit TM_VOLUME wins if it appeared. Otherwise the only new mount point
+# is taken, and for multi-volume images the one named like the image file.
+choose_volume() {
+  local image=$1 base mount
+  shift
+
+  if [[ -n ${TM_VOLUME:-} ]]; then
+    for mount in "$@"; do
+      if [[ ${mount##*/} == "$TM_VOLUME" ]]; then
+        printf '%s\n' "$TM_VOLUME"
+        return 0
+      fi
+    done
+    warn "the configured TM_VOLUME '$TM_VOLUME' did not appear; using what was attached"
+  fi
+
+  if (( $# == 1 )); then
+    printf '%s\n' "${1##*/}"
+    return 0
+  fi
+
+  base=$(basename "$image")
+  base=${base%.*}
+  for mount in "$@"; do
+    if [[ ${mount##*/} == "$base" ]]; then
+      printf '%s\n' "$base"
+      return 0
+    fi
+  done
+
   return 1
 }
 
@@ -348,7 +421,7 @@ log_directory() {
 }
 
 find_image() {
-  local dir=$1 attempt
+  local dir=$1 attempt entry
   local -a images=()
 
   if [[ -n $IMAGE_NAME ]]; then
@@ -365,7 +438,11 @@ find_image() {
   # below it. Retry once: right after mounting, an SMB directory can still be
   # empty or not ready.
   for attempt in 1 2; do
-    mapfile -t images < <(scan_images "$dir" 1)
+    images=()
+    # bash 3.2 (the stock /bin/bash on macOS) has no mapfile/readarray.
+    while IFS= read -r entry; do
+      [[ -n $entry ]] && images+=("$entry")
+    done < <(scan_images "$dir" 1)
 
     if [[ ${#images[@]} -gt 0 ]]; then
       break
@@ -405,13 +482,16 @@ keychain_passphrase() {
     -w 2>/dev/null
 }
 
-# Attach IMAGE and set ATTACH_MODE: "keychain" when the stored passphrase
-# worked, "prompt" when macOS is asked for it. ASIF needs `diskutil image`;
-# every other format uses hdiutil, and the two want their flags in a different
-# place, so both command lines are spelled out.
+# Attach IMAGE. Sets ATTACH_MODE: "keychain" when the stored passphrase worked,
+# "prompt" when macOS is asked for it, and — for the non-interactive keychain
+# path — ATTACH_OUTPUT to the command's output. hdiutil documents that output as "<device>\t<content hint>\t<mount point>", so
+# the mount point of an attach can be known without inspecting /Volumes. ASIF
+# needs `diskutil image`; every other format uses hdiutil, and the two want
+# their flags in a different place, so both command lines are spelled out.
 attach_image() {
   local image=$1 base passphrase=''
   local -a with_pass plain
+  ATTACH_OUTPUT=''
   base=$(basename "$image")
   case $image in
     *.[aA][sS][iI][fF])
@@ -426,18 +506,21 @@ attach_image() {
 
   if passphrase=$(keychain_passphrase); then
     log "using the passphrase stored in the login keychain for $base"
-    if printf '%s' "$passphrase" | "${with_pass[@]}" "$image"; then
+    if ATTACH_OUTPUT=$(printf '%s' "$passphrase" | "${with_pass[@]}" "$image" 2>&1); then
       ATTACH_MODE=keychain
       return 0
     fi
     warn "the stored passphrase did not unlock $base"
+    ATTACH_OUTPUT=''
   else
     log "no passphrase stored for $base (service '$IMAGE_KEYCHAIN_SERVICE', account '$IMAGE_KEYCHAIN_ACCOUNT')"
   fi
 
   # No usable keychain entry. When run from a terminal, let hdiutil/diskutil
   # prompt there; from launchd there is no terminal, so ask the GUI to open
-  # the image and macOS shows its standard password dialog.
+  # the image and macOS shows its standard password dialog. The output is not
+  # captured here: the prompt must stay visible, and the /Volumes diff finds
+  # the mount point instead.
   if [[ -t 0 && -t 1 ]]; then
     "${plain[@]}" "$image"
   else
@@ -495,7 +578,6 @@ main() {
       ;;
   esac
 
-  [[ -n $TM_VOLUME ]] || die "TM_VOLUME is not set; see --help"
   [[ -n $SMB_USER ]] || die "SMB_USER is not set; see --help"
   if [[ $TM_VOLUME == REPLACE_* || $SMB_USER == REPLACE_* ]]; then
     die "the LaunchAgent still contains REPLACE_* placeholders; edit the plist first"
@@ -512,7 +594,9 @@ main() {
   acquire_lock
   rotate_log
 
-  if volume_is_mounted; then
+  local learned
+  learned=$(learned_volume) || learned=''
+  if volume_is_mounted "$learned" || volume_is_mounted "${TM_VOLUME:-}"; then
     # Nothing to do. Stay quiet so the log does not grow every minute.
     exit 0
   fi
@@ -544,6 +628,11 @@ main() {
   image=$(find_image "$mount_point") || die "no Time Machine image available in $mount_point"
   log "using image $image"
 
+  # Snapshot before attaching: when the attach command's output cannot be parsed
+  # (the asynchronous `open` fallback), a new mount point is still detectable as
+  # the difference to this snapshot.
+  volumes_before=$(mounted_volumes)
+
   attach_image "$image" || die "could not attach $image"
 
   timeout=$MOUNT_TIMEOUT
@@ -551,10 +640,26 @@ main() {
     timeout=$PROMPT_TIMEOUT
   fi
 
-  if wait_for volume_is_mounted "$timeout"; then
-    log "Time Machine volume '$TM_VOLUME' is mounted"
-  else
-    warn "image $image was attached, but volume '$TM_VOLUME' did not appear"
+  # hdiutil documents its attach output as
+  # "<device>\t<content hint>\t<mount point>", so use it when present.
+  local -a attached=()
+  local mount chosen
+  while IFS= read -r mount; do
+    [[ -n $mount ]] && attached+=("$mount")
+  done < <(printf '%s\n' "$ATTACH_OUTPUT" |
+    awk -F'\t' 'NF >= 3 && $3 ~ /^\/Volumes\// { print $3 }')
+
+  # Otherwise wait for a volume that was not mounted before the attach. This
+  # also covers `open`, where macOS mounts the image after this script returns.
+  if (( ${#attached[@]} == 0 )); then
+    wait_for new_volume_appeared "$timeout" || true
+    while IFS= read -r mount; do
+      [[ -n $mount ]] && attached+=("$mount")
+    done < <(new_volumes)
+  fi
+
+  if (( ${#attached[@]} == 0 )); then
+    warn "image $image was attached, but no new volume appeared"
     warn "currently mounted volumes:"
     mounted_volumes >&2 || true
     if [[ $ATTACH_MODE == prompt ]]; then
@@ -562,6 +667,16 @@ main() {
     fi
     exit 1
   fi
+
+  if ! chosen=$(choose_volume "$image" "${attached[@]}"); then
+    warn "found more than one volume after attaching $image:"
+    printf '  %s\n' "${attached[@]}" >&2
+    die "cannot tell which one is the Time Machine volume; set TM_VOLUME"
+  fi
+
+  TM_VOLUME=$chosen
+  remember_volume "$TM_VOLUME"
+  log "Time Machine volume '$TM_VOLUME' is mounted"
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
