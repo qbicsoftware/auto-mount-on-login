@@ -11,16 +11,17 @@ On the Mac you want to back up:
 curl -fsSL https://raw.githubusercontent.com/qbicsoftware/auto-mount-on-login/main/install.sh | bash
 ```
 
-The installer asks for the settings in [Configuration](#configuration). To skip
-the questions, set them up front:
+The installer asks for the settings in [Configuration](#configuration), except for
+the Time Machine volume name: that one belongs to the image and is learned on the
+first successful mount. To skip the questions, set them up front:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/qbicsoftware/auto-mount-on-login/main/install.sh |
   SMB_USER=ab1234 bash -s -- --yes
 ```
 
-`TM_VOLUME` can be added to that line (`TM_VOLUME="time-machine"`) if you already
-know the name; otherwise the first successful mount detects it.
+`TM_VOLUME` is an optional override, for example `TM_VOLUME="time-machine"` on
+that line, if you want to pin a particular name.
 
 Then:
 
@@ -85,12 +86,12 @@ LaunchAgent's `EnvironmentVariables` dictionary:
 | `PROMPT_TIMEOUT` | no | `300` | Seconds to wait after a password dialog |
 
 `TM_VOLUME` is the name in `/Volumes` once the image is attached (as Finder and
-Disk Utility show it), **not** the image file name. It is optional: without it,
-the first successful attach learns the name and stores it in
+Disk Utility show it), **not** the image file name. The installer never asks for
+it: the first successful attach learns the name and stores it in
 `~/Library/Application Support/auto-mount-on-login/volume`, and later runs use
-that. Set it only if you want the script to prefer a particular name; a mismatch
-is logged and the volume that actually appeared is used. To look the name up by
-hand, mount the image once and run `ls /Volumes`.
+that. Set `TM_VOLUME` in the environment only if you want to pin a particular
+name; a mismatch is logged and the volume that actually appeared is used. To
+look the name up by hand, mount the image once and run `ls /Volumes`.
 
 The app wrapper cannot read the plist, so the installer writes the same settings
 to `~/.config/auto-mount-on-login/config.env`, which the wrapper sources. Edit
