@@ -3,6 +3,36 @@
 Re-attach the SMB share and the Time Machine image on a schedule, so backups do
 not stop when the network drops or when the Mac is locked instead of logged out.
 
+## Quick start
+
+On the Mac you want to back up, run the installer and answer its questions
+(volume name, SMB user id, and so on):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/qbicsoftware/auto-mount-on-login/main/install.sh | bash
+```
+
+Know the answers already? Set them up front and skip the confirmation:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/qbicsoftware/auto-mount-on-login/main/install.sh |
+  TM_VOLUME="Time Machine" SMB_USER=ab1234 bash -s -- --yes
+```
+
+Then:
+
+1. **Allow the one-time permission.** The first time the agent runs, macOS asks
+   whether `MountTimeMachine` may access files on a network volume — click
+   **Allow** (see [Network volume permission](#network-volume-permission)).
+   Trigger it now with
+   `launchctl kickstart -k gui/$(id -u)/org.kochtobi.mount-time-machine`.
+2. **Watch it work:**
+   `tail -f ~/Library/Logs/auto-mount-on-login.log`.
+3. **Pause / resume / remove** with the installed helpers:
+   `stop-autobackup`, `start-autobackup`, `uninstall-autobackup`.
+
+The rest of this file explains how it works and every option.
+
 ## What it does
 
 Every minute the LaunchAgent runs `mount-time-machine.sh`. The script does
