@@ -20,7 +20,8 @@
     <!--
         Replace REPLACE_WITH_* below. Optional settings (SMB_SHARE, IMAGE_NAME,
         LOG_FILE, IMAGE_KEYCHAIN_SERVICE, ...) can be added here as well; see
-        README.md.
+        README.md. TM_VOLUME is optional too: delete the key to let the script
+        learn the volume name from the first successful attach.
 
         Note: the app wrapper (the default with install.sh) does NOT read these
         variables when it runs the mount script - AppleScript's `do shell
